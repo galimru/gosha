@@ -59,7 +59,7 @@ func (t *ticket) checks(ctx context.Context) error {
 		}
 		msg := fmt.Sprintf("%s · checks ✅ %d/%d", t.issue.Identifier, len(res.checks), len(res.checks))
 		if len(res.checks) == 0 {
-			msg = fmt.Sprintf("%s · no checks expected", t.issue.Identifier)
+			msg = fmt.Sprintf("%s · no checks appeared", t.issue.Identifier)
 		}
 		t.notify(msg, t.prLink())
 		return t.merge(ctx)
@@ -126,21 +126,13 @@ func (t *ticket) savedFailure(ctx context.Context) (*tmpl.Feedback, error) {
 	return &fb, nil
 }
 
-// waitChecks polls head's checks until every expected one has started and
-// all have finished, start_grace or checks.timeout runs out, or ctx ends.
+// waitChecks polls head's checks until all have finished, start_grace or
+// checks.timeout runs out, or ctx ends (DESIGN §8.4). With checks.required
+// set, those must all appear; without it, whatever appears within
+// start_grace must pass, and nothing appearing is a pass.
 func (t *ticket) waitChecks(ctx context.Context, head string) (checkResult, error) {
 	cfg := t.p.Config.Checks
 	required := cfg.Required
-	anyExpected := false
-	if len(required) == 0 {
-		var err error
-		if anyExpected, err = t.p.Repo.HasCIWorkflows(ctx, "refs/remotes/origin/"+t.run.BaseBranch); err != nil {
-			return checkResult{}, err
-		}
-		if !anyExpected {
-			return checkResult{}, nil
-		}
-	}
 	start := time.Now()
 	settled := false
 	for {
@@ -154,9 +146,6 @@ func (t *ticket) waitChecks(ctx context.Context, head string) (checkResult, erro
 				res.missing = append(res.missing, name)
 			}
 		}
-		if anyExpected && len(cs) == 0 {
-			res.missing = []string{"any check"}
-		}
 		for _, c := range cs {
 			switch {
 			case c.Status != "completed":
@@ -167,6 +156,8 @@ func (t *ticket) waitChecks(ctx context.Context, head string) (checkResult, erro
 		}
 		elapsed := time.Since(start)
 		switch {
+		case len(required) == 0 && len(cs) == 0 && elapsed < cfg.StartGrace:
+			// Nothing yet, but checks may still start.
 		case len(res.missing) == 0 && len(res.pending) == 0:
 			if settled {
 				return res, nil

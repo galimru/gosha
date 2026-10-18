@@ -455,11 +455,8 @@ Steps are recorded per round (`review` → `address` → `review` …), with the
 Gosha waits for checks in-line: the ticket stays the project's active ticket while CI runs (up to `checks.timeout`). Waiting doesn't spend `agent.timeout`, which counts only agent passes.
 
 For the PR's **head SHA**:
-1. **Expected checks:**
-   - if `checks.required` is set → those names
-   - otherwise, if `.github/workflows/` on the base has workflows that trigger on `pull_request`, `pull_request_target` or `push` → "at least one check must appear"
-   - otherwise → no checks, pass immediately
-2. **Wait for checks to start:** poll check runs and commit statuses (the newest status per context) every ~15s. An expected check that hasn't appeared within `start_grace` counts as a failure. If the only failures are checks that never started, there's nothing in the code to fix, so the ticket goes **Blocked** at once, naming them.
+1. **Expected checks:** if `checks.required` is set, those names must appear. Otherwise whatever appears within `start_grace` must pass, and nothing appearing counts as a pass. Gosha doesn't read the repo's workflow files to guess what should run: their `branches:` and `paths:` filters decide that, and only GitHub applies them.
+2. **Wait for checks to start:** poll check runs and commit statuses (the newest status per context) every ~15s. A required check that hasn't appeared within `start_grace` counts as a failure. If the only failures are checks that never started, there's nothing in the code to fix, so the ticket goes **Blocked** at once, naming them.
 3. **Wait for checks to finish:** wait until all are completed, then wait another ~30s for late-starting checks before deciding. A completed check passes on `success`, `neutral` or `skipped`. Checks still running at `checks.timeout` count as failed.
 4. **Any failure, cancellation or timeout** starts a check round: fetch the failed jobs' logs and cut out the failing step's section (from its `##[group]Run …` line to the first `##[error]`; a job log ends with post-job cleanup, so a plain tail misses the error), then run the implementer with `address.md` (the **fix** step). The round and its feedback are recorded against the failing head, so an interrupted fix continues with the same feedback instead of counting another round. After `checks.max_rounds` rounds → **Blocked**.
 5. **After a fix:** if it committed, push, reply on the PR, and go back to review: a **re-review** of the fix. It only takes a `review.max_rounds` slot if it requests changes. Then checks run again on the new head. A fix that commits nothing goes **Blocked** with the implementer's explanation (e.g. a flaky test or an infrastructure problem).
@@ -723,3 +720,4 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - The Delivered comment's contents are recorded on the run as they're gathered (implementer results, each posted review, fix rounds, checks, diff, deploy). The implementer result has an optional `left_out` list. (M6)
 - Ticket comments written during a pickup reach its next implementer pass. (M6) There's no `/restart` command: closing the PR on GitHub and moving the ticket to Ready starts over. (M7)
 - `gosha validate` is an offline check of a repo's config, so it can run in the project's CI; `gosha doctor` checks everything about the host, including credentials, Linear and Notion. (M7)
+- Without `checks.required`, whatever checks appear within `start_grace` must pass, and none appearing is a pass; Gosha doesn't parse workflow triggers. (M7)

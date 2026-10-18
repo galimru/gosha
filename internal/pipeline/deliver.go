@@ -280,7 +280,7 @@ func (t *ticket) deliveredComment() string {
 	case len(d.Checks) > 0:
 		b.WriteString("- Checks passed: " + codeList(d.Checks) + "\n")
 	case t.run.CheckedSHA != "":
-		b.WriteString("- Checks: none expected\n")
+		b.WriteString("- Checks: none appeared\n")
 	}
 
 	if dep := d.Deploy; dep != nil {

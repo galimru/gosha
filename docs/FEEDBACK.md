@@ -22,14 +22,6 @@ Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejec
 
 **Why rejected:** checks always come last, so a shared budget lets a long review loop use up the rounds CI needs, and one flaky test then blocks a PR that was nearly done. The two loops also fail differently (review: no agreement; CI: a failure the agent can't fix), so they need different limits. `agent.timeout` already caps the total cost.
 
-## 8. Simpler expected checks
-
-**Status:** agreed
-
-**Today (§8.4):** Gosha parses `.github/workflows/` triggers to decide if a check must appear. `RunsOnPR` (`internal/gitx/merge.go`) ignores `branches:` and `paths:` filters, so a repo whose only workflow is `deploy.yml` on push to `main` blocks every ticket.
-
-**Change:** if `checks.required` is set, gate on those names. Otherwise, whatever appears within `start_grace` must pass, and nothing appearing counts as a pass.
-
 ## 13. Config snapshot per pickup
 
 **Status:** rejected

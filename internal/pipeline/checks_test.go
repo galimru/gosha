@@ -76,19 +76,18 @@ func TestChecksGreenMerges(t *testing.T) {
 	}
 }
 
-func TestNoChecksExpected(t *testing.T) {
-	h := newHarness(t, "")
-	os.RemoveAll(filepath.Join(h.upstream, ".github"))
-	gitIn(t, h.upstream, "commit", "--quiet", "-am", "no ci")
-	h.p.Repo.Fetch(h.ctx, "")
+func TestNoChecksAppear(t *testing.T) {
+	h := newHarness(t, "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\nchecks:\n  start_grace: 20ms\n")
 	h.agent.act = commitEach(t)
+	h.prs.checks = func(int, string) []github.Check { return nil }
 	if err := h.pickup(); err != nil {
 		t.Fatal(err)
 	}
-	if r := h.lastRun(); r.Outcome != OutcomeDelivered || h.prs.checkCalls != 0 {
+	// It waits out start_grace, then nothing appearing is a pass.
+	if r := h.lastRun(); r.Outcome != OutcomeDelivered || h.prs.checkCalls < 2 {
 		t.Errorf("run = %+v, %d check calls", r, h.prs.checkCalls)
 	}
-	if !strings.Contains(h.lin.comments[0], "Checks: none expected") {
+	if !strings.Contains(h.lin.comments[0], "Checks: none appeared") {
 		t.Errorf("comment = %s", h.lin.comments[0])
 	}
 }

@@ -279,9 +279,6 @@ func newHarness(t *testing.T, cfg string) *harness {
 	if cfg == "" {
 		cfg = "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\n"
 	}
-	// CI runs on pull requests, so a PR is expected to get checks.
-	os.MkdirAll(filepath.Join(up.dir, ".github", "workflows"), 0o755)
-	os.WriteFile(filepath.Join(up.dir, ".github", "workflows", "ci.yml"), []byte("on: [pull_request]\n"), 0o644)
 	up.commit(cfg)
 	checkPoll, checkSettle = time.Millisecond, time.Millisecond
 
