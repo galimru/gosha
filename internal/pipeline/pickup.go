@@ -1,5 +1,5 @@
-// Package pipeline is the per-ticket pipeline (DESIGN §8). M1 has pickup
-// selection and the dry-run report only.
+// Package pipeline is the per-ticket pipeline (DESIGN §8). As of M2 it
+// takes a ticket from Ready to an open PR.
 package pipeline
 
 import (
@@ -33,6 +33,8 @@ const (
 // Candidate is a Ready ticket with what pickup needs to decide on it.
 type Candidate struct {
 	Issue linear.Issue
+	// Comments are all the ticket's comments, oldest first.
+	Comments []linear.Comment
 	// NewComments are human comments since Gosha's last run on the ticket.
 	NewComments []linear.Comment
 	OpenRun     *store.Run
