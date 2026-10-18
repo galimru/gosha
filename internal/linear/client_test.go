@@ -228,3 +228,20 @@ func TestWrites(t *testing.T) {
 		t.Errorf("seen = %v", seen)
 	}
 }
+
+func TestIssue(t *testing.T) {
+	_, c := newFake(t, func(q string, v map[string]any) (int, string) {
+		if v["id"] != "NXT-1" {
+			return 200, `{"data":{"issue":null}}`
+		}
+		return 200, `{"data":{"issue":{"id":"i1","identifier":"NXT-1","number":1,"title":"One",
+			"state":{"id":"s2","name":"In Progress","type":"started"},"inverseRelations":{"nodes":[]}}}}`
+	})
+	is, err := c.Issue(context.Background(), "NXT-1")
+	if err != nil || is.ID != "i1" || is.State.Name != "In Progress" {
+		t.Fatalf("Issue = %+v, %v", is, err)
+	}
+	if _, err := c.Issue(context.Background(), "NXT-404"); err == nil {
+		t.Error("expected an error for a missing issue")
+	}
+}
