@@ -102,6 +102,17 @@ Changes from the plan:
 
 ## M5 — Project context (Notion mirror)
 
+**Status: built** (2026-10-18), pending the end-to-end check below on a real Notion workspace. Behaviour that is specific to M5, until the daemon exists (M7):
+- **The idle refresh runs from `gosha run`'s poll loop** (every 15 minutes, and on every poll while the project is paused), not from a daemon-wide refresher.
+
+Changes from the plan:
+- **Search detects changes, but the tree comes from the pages themselves** (their child page blocks), so a page search hasn't indexed yet is still mirrored. Only changed pages are fetched; pages fetched within two minutes of their last edit are fetched once more, because Notion rounds edit times to the minute.
+- **Page bodies are cached with links as page ids** (`.cache/`), so a rename or move rewrites every link to the page without fetching the linking pages again.
+- **The frozen copy is per pickup,** at `runs/<ticket>/context/`, shared by every agent pass in it.
+- **Notion without access to the root page pauses the project** (fail closed). Any other Notion failure uses the last mirror; with no mirror yet, the project waits and retries.
+- **A project resumes only once its config, Linear and Notion checks all pass,** so a pause for one reason isn't cleared by another check passing.
+- **`_linked/`** (pages linked from tickets but outside the tree) is deferred.
+
 - Page tree → file tree, `README.md`/`INDEX.md`, front-matter, link rewriting
 - Incremental refresh with renames, moves and deletes (`.manifest.json`)
 - Per-run frozen copy, read-only through the sandbox
