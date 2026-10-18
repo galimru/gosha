@@ -203,18 +203,6 @@ func TestEmptyFollowUpBlocks(t *testing.T) {
 	}
 }
 
-func TestRestartLineIsNotAnInstruction(t *testing.T) {
-	h := newHarness(t, "")
-	h.agent.act = commitEach(t)
-	if err := h.pickup(linear.Comment{ID: "c1", Body: "/restart\nUse OAuth.", Human: true, CreatedAt: time.Now()}); err != nil {
-		t.Fatal(err)
-	}
-	p := h.agent.calls[0].Prompt
-	if !strings.Contains(p, "Use OAuth.") || strings.Contains(p, "/restart") {
-		t.Errorf("prompt:\n%s", p)
-	}
-}
-
 func TestCommentDuringPickupReachesAddress(t *testing.T) {
 	h := newHarness(t, "")
 	late := linear.Comment{ID: "c2", Body: "Also handle expired sessions.", Author: "Ann", Human: true, CreatedAt: time.Now().Add(time.Minute)}

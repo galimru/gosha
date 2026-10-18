@@ -113,14 +113,6 @@ Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejec
 
 **Change:** prompts are built in. A repo can add an optional `.gosha/instructions.md`, appended to every prompt. The repo's `CLAUDE.md` already applies to agents.
 
-## 11. Drop `/restart`
-
-**Status:** agreed
-
-**Today (§2, §8.1):** a `/restart` comment closes the PR and starts fresh.
-
-**Change:** closing the PR on GitHub already means restart (a PR closed unmerged starts fresh). Drop the command and its filtering.
-
 ## 13. Config snapshot per pickup
 
 **Status:** rejected

@@ -50,7 +50,7 @@ func (t *ticket) merge(ctx context.Context) error {
 	switch {
 	case errors.Is(err, github.ErrHeadMoved):
 		return t.block(ctx, fmt.Sprintf("Someone else pushed to `%s` after its checks passed, so Gosha didn't merge it. "+
-			"Gosha only merges what it checked. Comment `/restart` and move the ticket to Ready to start over, or merge the PR yourself.", t.run.Branch), nil)
+			"Gosha only merges what it checked. Close the PR and move the ticket to Ready to start over, or merge the PR yourself.", t.run.Branch), nil)
 	case errors.Is(err, github.ErrNotMergeable):
 		return t.block(ctx, "GitHub refused to merge the pull request: "+err.Error(), nil)
 	case err != nil:

@@ -24,7 +24,7 @@ var stepNames = map[string]string{
 // needAnswer is what a Blocked comment asks for unless the step says
 // otherwise.
 const needAnswer = "answer in a comment, then move the ticket back to Ready and I'll continue where I stopped. " +
-	"Comment `/restart` instead to start over from scratch."
+	"To start over from scratch, close the pull request instead."
 
 // block posts the Blocked comment, moves the ticket to Blocked and keeps
 // the branch, PR and checkout so a later Ready resumes (DESIGN §8.9).

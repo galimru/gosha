@@ -59,7 +59,6 @@ func (f *fakeLinear) state() string {
 
 type fakePRs struct {
 	prs      map[int]*github.PR
-	closed   []int
 	reviews  []postedReview
 	comments []string
 	// feedback is human PR feedback; HumanFeedback returns what's after since.
@@ -166,12 +165,6 @@ func (f *fakePRs) CreatePR(_ context.Context, branch, base, title, body string) 
 	p := &github.PR{Number: n, URL: fmt.Sprintf("https://github.com/o/r/pull/%d", n), State: "open"}
 	f.prs[n] = p
 	return p, nil
-}
-
-func (f *fakePRs) ClosePR(_ context.Context, n int) error {
-	f.prs[n].State = "closed"
-	f.closed = append(f.closed, n)
-	return nil
 }
 
 // fakeAgent stands in for the implementer and the reviewer.
@@ -492,20 +485,18 @@ func TestFollowUpAfterMerge(t *testing.T) {
 	}
 }
 
-func TestRestart(t *testing.T) {
+func TestClosedPRRestarts(t *testing.T) {
 	h := newHarness(t, "")
 	h.agent.act = func(call int, dir string) string { commitFile(t, dir, fmt.Sprintf("f%d.go", call)); return doneResult }
 	h.pickup()
 	first := h.run()
-	if err := h.pickup(linear.Comment{ID: "c1", Body: "/restart", Human: true, CreatedAt: time.Now()}); err != nil {
+	h.prs.prs[first.PRNumber].State = "closed"
+	if err := h.pickup(); err != nil {
 		t.Fatal(err)
 	}
 	r := h.run()
 	if r.ID == first.ID || r.Mode != ModeRestart || r.Branch != first.Branch || r.Step != StepChecks {
 		t.Errorf("restarted run = %+v", r)
-	}
-	if len(h.prs.closed) != 1 || h.prs.closed[0] != first.PRNumber {
-		t.Errorf("closed = %v", h.prs.closed)
 	}
 	// The new branch has only the new work.
 	if _, err := os.Stat(filepath.Join(h.agent.calls[1].Dir, "f1.go")); err == nil {

@@ -106,8 +106,6 @@ func openBlockers(is linear.Issue, st *linear.States) []string {
 func mode(p *config.Project, c Candidate) (mode, branch string) {
 	m := ModeFresh
 	switch {
-	case HasRestart(c.NewComments):
-		m = ModeRestart
 	case c.OpenRun != nil && c.OpenRun.PRNumber == 0:
 		return ModeResume, c.OpenRun.Branch
 	case c.OpenRun != nil && len(c.NewComments) > 0:
@@ -131,30 +129,11 @@ func branchName(is linear.Issue) string {
 	return name
 }
 
-// HasRestart reports a /restart command on a line of its own.
-func HasRestart(cs []linear.Comment) bool {
-	for _, c := range cs {
-		for _, line := range strings.Split(c.Body, "\n") {
-			if strings.TrimSpace(line) == "/restart" {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// instructions are the comments as the agent gets them: `/restart` lines
-// are commands to Gosha, not instructions, and are left out.
+// instructions are the comments that say something.
 func instructions(cs []linear.Comment) []linear.Comment {
 	var out []linear.Comment
 	for _, c := range cs {
-		var keep []string
-		for _, line := range strings.Split(c.Body, "\n") {
-			if strings.TrimSpace(line) != "/restart" {
-				keep = append(keep, line)
-			}
-		}
-		if c.Body = strings.TrimSpace(strings.Join(keep, "\n")); c.Body != "" {
+		if c.Body = strings.TrimSpace(c.Body); c.Body != "" {
 			out = append(out, c)
 		}
 	}

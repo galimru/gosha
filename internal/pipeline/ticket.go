@@ -64,7 +64,6 @@ type prOps interface {
 	Token(ctx context.Context) (string, error)
 	PR(ctx context.Context, number int) (*github.PR, error)
 	CreatePR(ctx context.Context, branch, base, title, body string) (*github.PR, error)
-	ClosePR(ctx context.Context, number int) error
 	CreateReview(ctx context.Context, number int, sha, body string, comments []github.ReviewComment) (int64, error)
 	CreateComment(ctx context.Context, number int, body string) error
 	HumanFeedback(ctx context.Context, number int, since time.Time) ([]github.Feedback, error)
@@ -280,8 +279,6 @@ func (t *ticket) claim(ctx context.Context, all []linear.Comment) error {
 	}
 	mode := ModeFresh
 	switch {
-	case HasRestart(t.comments):
-		mode = ModeRestart
 	case t.run != nil:
 		mode = ModeResume
 	case t.prev != nil:
@@ -294,11 +291,10 @@ func (t *ticket) claim(ctx context.Context, all []linear.Comment) error {
 		}
 	} else {
 		// A follow-up stays one when it resumes, so it keeps its prompt.
-		if t.run.Mode != ModeFollowUp || mode == ModeRestart {
+		if t.run.Mode != ModeFollowUp {
 			t.run.Mode = mode
 		}
-		// A restart never continues the old session.
-		t.resuming = mode != ModeRestart
+		t.resuming = true
 		if err := t.save(ctx, t.run.Step); err != nil {
 			return err
 		}
@@ -316,18 +312,7 @@ func (t *ticket) claim(ctx context.Context, all []linear.Comment) error {
 // implements, pushes and opens the PR.
 func (t *ticket) drive(ctx context.Context) error {
 	reuse := ""
-	switch {
-	case HasRestart(t.comments):
-		if t.run.Branch != "" {
-			reuse = t.run.Branch
-			if err := t.restart(ctx, t.run); err != nil {
-				return err
-			}
-			if err := t.newRun(ctx, ModeRestart); err != nil {
-				return err
-			}
-		}
-	case t.run.PRNumber != 0:
+	if t.run.PRNumber != 0 {
 		pr, err := t.prs.PR(ctx, t.run.PRNumber)
 		if err != nil {
 			return err
@@ -392,19 +377,9 @@ func (t *ticket) newRun(ctx context.Context, mode string) error {
 	return t.e.Store.CreateRun(ctx, t.run)
 }
 
-// restart closes the run's PR, deletes its branch and checkout and ends it.
+// restart ends a run whose PR was closed without merging, deleting its
+// branch and checkout.
 func (t *ticket) restart(ctx context.Context, r *store.Run) error {
-	if r.PRNumber != 0 {
-		pr, err := t.prs.PR(ctx, r.PRNumber)
-		if err != nil {
-			return err
-		}
-		if pr.State == "open" {
-			if err := t.prs.ClosePR(ctx, r.PRNumber); err != nil {
-				return err
-			}
-		}
-	}
 	tok, err := t.prs.Token(ctx)
 	if err != nil {
 		return err
@@ -618,7 +593,7 @@ func (t *ticket) collect(ctx context.Context, checkout string) (bool, error) {
 		return true, nil
 	}
 	if errors.Is(err, gitx.ErrNotCheckout) {
-		return false, t.block(ctx, "The ticket checkout is damaged (its .git isn't a directory). Comment `/restart` and move the ticket to Ready to start over.", nil)
+		return false, t.block(ctx, "The ticket checkout is damaged (its .git isn't a directory). Close the pull request and move the ticket to Ready to start over.", nil)
 	}
 	var gerr *gitx.Error
 	if errors.As(err, &gerr) && strings.Contains(gerr.Stderr, "couldn't find remote ref") {

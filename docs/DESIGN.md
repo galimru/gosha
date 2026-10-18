@@ -50,7 +50,7 @@ Gosha doesn't replace the project's CI/CD. It produces the changes that the exis
 | Read the result comment on a ticket **In Review**, check the deploy, move it to **Done** | Nothing. Done is human-only. |
 | In Review → comment what's wrong → **Ready** | Opens a **follow-up PR** on the same ticket, using the comment as instructions |
 | Ticket **Blocked** → comment an answer → **Ready** | Continues on the existing branch/PR with the answer |
-| Comment `/restart` → **Ready** | Closes the open PR, deletes the branch, starts from scratch |
+| Close the PR on GitHub → **Ready** | Deletes the branch and starts from scratch |
 | Move a ticket Gosha is working on to **Backlog / Todo** | Stops the agent, keeps the branch/PR (pause). Ready later = resume. |
 | Move any ticket to **Canceled** | Stops the agent, closes the PR, deletes the branch |
 
@@ -438,13 +438,13 @@ All of them go through the same **address** step (`address.md`, data in `.Feedba
 3. It orders the rest by priority (Urgent first, Linear's "No priority" last), then by creation time, and takes one if the project is idle.
 4. Claim: move the ticket to In Progress, record the run, and notify Telegram.
 5. Decide the mode:
-   - `/restart` in the new comments → close the PR, delete the branch → **fresh**
    - an open Gosha PR exists → **resume**: the round limit resets; new ticket comments or new human PR feedback go to an **address** pass first, otherwise the PR gets a fresh review (§8.3)
    - the ticket's last PR was merged, by Gosha or by hand → **follow-up**: a fresh run on a new branch with suffix `-2`, `-3`, …, whose implementer is told about the earlier PR (`.FollowUp`) and that the new comments say what to change. A follow-up with no new human comment goes **Blocked** at once, asking what to change; no agent runs.
    - a run Blocked after its merge (the deploy failed): with new comments → finish that run and start a **follow-up**; without → look at the deploy again (§8.7)
+   - the ticket's PR was closed without merging → delete the branch → **fresh**
    - otherwise → **fresh**
 
-   `/restart` lines are commands to Gosha: they're left out of the comments agents get. Ticket comments posted while Gosha works on the ticket are added to the instructions of the next implementer pass in the same pickup.
+   Ticket comments posted while Gosha works on the ticket are added to the instructions of the next implementer pass in the same pickup.
 
 ### 8.2 Implement
 1. Refresh the project context and freeze a copy for the run (§6.2).
@@ -741,5 +741,5 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - A ticket whose last PR was merged (by Gosha or by hand) is a follow-up when it's Ready again: a new branch, and the implementer is told about the earlier PR. A follow-up with no new human comment goes Blocked without running an agent. (M6)
 - The deploy is found by the merge commit's `head_sha` on the base. A failed deploy goes Blocked; Ready without a comment looks at the deploy again, Ready with a comment opens a follow-up. (M6)
 - The Delivered comment's contents are recorded on the run as they're gathered (implementer results, each posted review, fix rounds, checks, diff, deploy). The implementer result has an optional `left_out` list. (M6)
-- `/restart` lines aren't passed to agents, and ticket comments written during a pickup reach its next implementer pass. (M6)
+- Ticket comments written during a pickup reach its next implementer pass. (M6) There's no `/restart` command: closing the PR on GitHub and moving the ticket to Ready starts over. (M7)
 - `gosha validate` is an offline check of a repo's config, so it can run in the project's CI; `gosha doctor` checks everything about the host, including credentials, Linear and Notion. (M7)
