@@ -4,7 +4,5 @@ ALTER TABLE runs ADD COLUMN reviewed_sha  TEXT    NOT NULL DEFAULT '';
 ALTER TABLE runs ADD COLUMN review_id     INTEGER NOT NULL DEFAULT 0;
 -- Path to the last reviewer result, read back by the address step.
 ALTER TABLE runs ADD COLUMN review_result TEXT    NOT NULL DEFAULT '';
--- Time of the newest human PR feedback already given to the implementer.
-ALTER TABLE runs ADD COLUMN pr_cursor     TEXT    NOT NULL DEFAULT '';
 -- The implementer's last address summary, shown to the next reviewer.
 ALTER TABLE runs ADD COLUMN last_reply    TEXT    NOT NULL DEFAULT '';

@@ -133,17 +133,13 @@ func TestReviewFields(t *testing.T) {
 	if err := s.CreateRun(ctx, r); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := s.OpenRun(ctx, "p", "NXT-1"); !got.PRCursor.IsZero() {
-		t.Errorf("cursor = %v", got.PRCursor)
-	}
-	at := time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC)
-	r.ReviewedSHA, r.ReviewID, r.ReviewResult, r.PRCursor, r.LastReply = "abc", 77, "/r/review.json", at, "fixed it"
+	r.ReviewedSHA, r.ReviewID, r.ReviewResult, r.LastReply = "abc", 77, "/r/review.json", "fixed it"
 	if err := s.UpdateRun(ctx, r); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.OpenRun(ctx, "p", "NXT-1")
 	if err != nil || got.ReviewedSHA != "abc" || got.ReviewID != 77 || got.ReviewResult != "/r/review.json" ||
-		!got.PRCursor.Equal(at) || got.LastReply != "fixed it" {
+		got.LastReply != "fixed it" {
 		t.Fatalf("after update: %+v, %v", got, err)
 	}
 }
@@ -188,7 +184,7 @@ func TestMigrateFromM2(t *testing.T) {
 	}
 	defer s.Close()
 	got, err := s.OpenRun(ctx, "p", "NXT-1")
-	if err != nil || got == nil || got.Step != "review" || got.ReviewID != 0 || !got.PRCursor.IsZero() {
+	if err != nil || got == nil || got.Step != "review" || got.ReviewID != 0 {
 		t.Fatalf("migrated run = %+v, %v", got, err)
 	}
 }

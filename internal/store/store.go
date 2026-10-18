@@ -131,9 +131,6 @@ type Run struct {
 	ReviewID    int64
 	// ReviewResult is the path to the last reviewer result file.
 	ReviewResult string
-	// PRCursor is the time of the newest human PR feedback the implementer
-	// has been given.
-	PRCursor time.Time
 	// LastReply is the implementer's last address summary.
 	LastReply string
 	// CheckedSHA is the head the last checks verdict was for, and
@@ -171,12 +168,12 @@ func (s *Store) UpdateRun(ctx context.Context, r *Run) error {
 	ts := now()
 	_, err := s.db.ExecContext(ctx, `UPDATE runs SET mode = ?, branch = ?, pr_number = ?, step = ?, review_round = ?,
 		check_round = ?, impl_session = ?, base_branch = ?, pr_url = ?, blocked_reason = ?, agent_runs = ?,
-		reviewed_sha = ?, review_id = ?, review_result = ?, pr_cursor = ?, last_reply = ?,
+		reviewed_sha = ?, review_id = ?, review_result = ?, last_reply = ?,
 		checked_sha = ?, checks_result = ?, merge_sha = ?, report = ?, updated_at = ?
 		WHERE id = ?`,
 		r.Mode, r.Branch, r.PRNumber, r.Step, r.ReviewRound, r.CheckRound, r.ImplSession,
 		r.BaseBranch, r.PRURL, r.BlockedReason, r.AgentRuns,
-		r.ReviewedSHA, r.ReviewID, r.ReviewResult, formatTime(r.PRCursor), r.LastReply,
+		r.ReviewedSHA, r.ReviewID, r.ReviewResult, r.LastReply,
 		r.CheckedSHA, r.ChecksResult, r.MergeSHA, r.Report, ts, r.ID)
 	if err != nil {
 		return fmt.Errorf("update run: %w", err)
@@ -193,20 +190,20 @@ func (s *Store) FinishRun(ctx context.Context, id int64, outcome string) error {
 }
 
 const runColumns = `id, project, ticket_id, mode, branch, pr_number, step, review_round, check_round, impl_session,
-	base_branch, pr_url, blocked_reason, agent_runs, reviewed_sha, review_id, review_result, pr_cursor, last_reply,
+	base_branch, pr_url, blocked_reason, agent_runs, reviewed_sha, review_id, review_result, last_reply,
 	checked_sha, checks_result, merge_sha, report, outcome, created_at, updated_at`
 
 func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 	var r Run
-	var created, updated, cursor string
+	var created, updated string
 	err := row.Scan(&r.ID, &r.Project, &r.TicketID, &r.Mode, &r.Branch, &r.PRNumber, &r.Step,
 		&r.ReviewRound, &r.CheckRound, &r.ImplSession, &r.BaseBranch, &r.PRURL, &r.BlockedReason, &r.AgentRuns,
-		&r.ReviewedSHA, &r.ReviewID, &r.ReviewResult, &cursor, &r.LastReply,
+		&r.ReviewedSHA, &r.ReviewID, &r.ReviewResult, &r.LastReply,
 		&r.CheckedSHA, &r.ChecksResult, &r.MergeSHA, &r.Report, &r.Outcome, &created, &updated)
 	if err != nil {
 		return nil, err
 	}
-	r.CreatedAt, r.UpdatedAt, r.PRCursor = parseTime(created), parseTime(updated), parseTime(cursor)
+	r.CreatedAt, r.UpdatedAt = parseTime(created), parseTime(updated)
 	return &r, nil
 }
 

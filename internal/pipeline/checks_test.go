@@ -287,27 +287,6 @@ func TestMergeRefusedWhenHeadMoved(t *testing.T) {
 	}
 }
 
-func TestHumanPRCommentBeforeMerge(t *testing.T) {
-	h := newHarness(t, "")
-	h.agent.act = commitEach(t)
-	h.prs.checks = func(call int, sha string) []github.Check {
-		if len(h.prs.feedback) == 0 {
-			h.prs.feedback = []github.Feedback{{Author: "ann", Kind: github.FeedbackComment, Body: "wait, rename it", At: time.Now()}}
-		}
-		return green(call, sha)
-	}
-	if err := h.pickup(); err != nil {
-		t.Fatal(err)
-	}
-	r := h.lastRun()
-	if r.Outcome != OutcomeDelivered || len(h.agent.calls) != 2 || len(h.prs.reviews) != 2 || !r.PRCursor.Equal(h.prs.feedback[0].At) {
-		t.Fatalf("run = %+v, %d impl calls, %d reviews", r, len(h.agent.calls), len(h.prs.reviews))
-	}
-	if !strings.Contains(h.agent.calls[1].Prompt, "wait, rename it") {
-		t.Error("address pass didn't get the comment")
-	}
-}
-
 func TestCrashAfterMerge(t *testing.T) {
 	h := newHarness(t, "")
 	h.agent.act = commitEach(t)

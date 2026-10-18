@@ -14,14 +14,6 @@ Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejec
 
 **Change:** always deliver; the Delivered comment says deploy ✅/❌ with a link. A failed deploy is handled by the normal follow-up (comment → Ready). §1.1 already says CI/CD owns deploy.
 
-## 5. One channel for human instructions
-
-**Status:** agreed
-
-**Today (§1.4 vs §8.3, §8.5):** §1.4 says Linear is the only place a human instructs Gosha, but human PR comments are also collected as instructions (PR cursor, check before every verdict and before merge).
-
-**Change:** Linear only, matching §1.4. Drops the PR cursor and PR feedback collection.
-
 ## 6. One round budget
 
 **Status:** rejected
@@ -29,8 +21,6 @@ Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejec
 **Proposed:** one `max_rounds` for every address pass in a pickup, instead of `review.max_rounds` and `checks.max_rounds`.
 
 **Why rejected:** checks always come last, so a shared budget lets a long review loop use up the rounds CI needs, and one flaky test then blocks a PR that was nearly done. The two loops also fail differently (review: no agreement; CI: a failure the agent can't fix), so they need different limits. `agent.timeout` already caps the total cost.
-
-**DESIGN.md fix instead (§8 feedback table):** with human PR feedback gone (point 5), the counting rule is simply: every reviewer `request_changes` uses a review round, and every CI or conflict fix uses a check round.
 
 ## 7. Base sync through GitHub
 

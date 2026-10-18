@@ -16,7 +16,7 @@ These comments were written by humans since the last run. They take priority ove
 
 {{.Body}}
 {{end}}{{end}}{{if .Feedback.Review}}
-# Feedback on the pull request
+# Review feedback
 
 {{.Feedback.Review}}
 {{end}}{{if .Feedback.CI}}

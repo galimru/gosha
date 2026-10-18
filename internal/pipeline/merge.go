@@ -12,20 +12,12 @@ import (
 	"github.com/galimru/gosha/internal/tmpl"
 )
 
-// merge merges the PR at the head the checks passed on (DESIGN §8.5).
-// New human PR feedback goes back to the implementer first, and a base
-// that moved is merged into the branch, which then needs checks again.
+// merge merges the PR at the head the checks passed on (DESIGN §8.5). A
+// base that moved is merged into the branch, which then needs checks
+// again.
 func (t *ticket) merge(ctx context.Context) error {
 	if err := t.save(ctx, StepMerge); err != nil {
 		return err
-	}
-	fb, err := t.prs.HumanFeedback(ctx, t.run.PRNumber, t.run.PRCursor)
-	if err != nil {
-		return err
-	}
-	if len(fb) > 0 {
-		t.notify(fmt.Sprintf("%s · %d new human PR comments before merging", t.issue.Identifier, len(fb)), t.prLink())
-		return t.reviewLoop(ctx, true)
 	}
 	tok, err := t.prs.Token(ctx)
 	if err != nil {

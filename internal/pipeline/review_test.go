@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/galimru/gosha/internal/agent"
-	"github.com/galimru/gosha/internal/github"
 	"github.com/galimru/gosha/internal/linear"
 )
 
@@ -90,25 +89,6 @@ func TestReviewRoundsExhausted(t *testing.T) {
 	}
 	if r := h.run(); r.Step != StepChecks || r.ReviewRound != 1 || len(h.agent.calls) != 2 {
 		t.Errorf("after Ready: %+v, %d impl calls", r, len(h.agent.calls))
-	}
-}
-
-func TestHumanPRCommentForcesAddress(t *testing.T) {
-	h := newHarness(t, "")
-	h.agent.act = commitEach(t)
-	h.prs.feedback = []github.Feedback{{Author: "ann", Kind: github.FeedbackInline, Path: "f1.go", Line: 1, Body: "please rename", At: time.Now()}}
-	if err := h.pickup(); err != nil {
-		t.Fatal(err)
-	}
-	r := h.run()
-	if r.Step != StepChecks || len(h.agent.calls) != 2 || len(h.prs.reviews) != 2 || !r.PRCursor.Equal(h.prs.feedback[0].At) {
-		t.Fatalf("run = %+v, %d impl calls, %d reviews", r, len(h.agent.calls), len(h.prs.reviews))
-	}
-	p := h.agent.calls[1].Prompt
-	for _, want := range []string{"From people on the pull request", "**ann** (inline comment on `f1.go:1`): please rename"} {
-		if !strings.Contains(p, want) {
-			t.Errorf("address prompt missing %q:\n%s", want, p)
-		}
 	}
 }
 

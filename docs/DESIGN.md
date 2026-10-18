@@ -404,11 +404,12 @@ Every step is **idempotent**. It first checks the real state (branch, PR, checks
 | Source | Feedback | Limit |
 |---|---|---|
 | Reviewer agent | inline review comments + verdict | `review.max_rounds` |
-| Humans on the PR | PR review comments | (counted with review rounds) |
 | CI checks | failed check names + tail of failing job logs | `checks.max_rounds` |
 | Base branch | merge conflicts | (counted with check rounds) |
 
-All of them go through the same **address** step (`address.md`, data in `.Feedback.*`). Only how feedback is *collected* and how each source is *limited* differs. Every limit is reset when a human moves the ticket back to Ready.
+All of them go through the same **address** step (`address.md`, data in `.Feedback.*`). Only how feedback is *collected* and how each source is *limited* differs. Every reviewer `request_changes` uses a review round, and every CI or conflict fix uses a check round. Every limit is reset when a human moves the ticket back to Ready.
+
+Humans instruct Gosha only through Linear (§1.4): comments on the PR are for people and aren't read. New ticket comments reach the next implementer pass.
 
 ### 8.1 Pickup
 1. The poller lists Ready issues in the team.
@@ -416,7 +417,7 @@ All of them go through the same **address** step (`address.md`, data in `.Feedba
 3. It orders the rest by priority (Urgent first, Linear's "No priority" last), then by creation time, and takes one if the project is idle.
 4. Claim: move the ticket to In Progress, record the run, and notify Telegram.
 5. Decide the mode:
-   - an open Gosha PR exists → **resume**: the round limit resets; new ticket comments or new human PR feedback go to an **address** pass first, otherwise the PR gets a fresh review (§8.3)
+   - an open Gosha PR exists → **resume**: the round limit resets; new ticket comments go to an **address** pass first, otherwise the PR gets a fresh review (§8.3)
    - the ticket's last PR was merged, by Gosha or by hand → **follow-up**: a fresh run on a new branch with suffix `-2`, `-3`, …, whose implementer is told about the earlier PR (`.FollowUp`) and that the new comments say what to change. A follow-up with no new human comment goes **Blocked** at once, asking what to change; no agent runs.
    - a run Blocked after its merge (the deploy failed): with new comments → finish that run and start a **follow-up**; without → look at the deploy again (§8.7)
    - the ticket's PR was closed without merging → delete the branch → **fresh**
@@ -444,10 +445,9 @@ All of them go through the same **address** step (`address.md`, data in `.Feedba
 ### 8.3 Review loop (at most `review.max_rounds`)
 1. Run the reviewer on the branch head, in a fresh clone (§7). From round 2 its prompt includes the last round's findings and the implementer's reply, so it checks they were resolved instead of starting over.
 2. Post the result as a GitHub PR review on that head SHA, with inline comments. The review event is `COMMENT`, with a ✅ or ❌ verdict in the body (see §8.6). Comments GitHub can't anchor (a line outside the diff, a whole file) go into the review body, so one bad line number never fails the review.
-3. Collect **human PR feedback** since the run's PR cursor: conversation comments, inline comments and review bodies, from anyone who isn't a bot.
-4. `approve`, with no `must` comments and no new human PR feedback → go to **checks**.
-5. If this was round `review.max_rounds` → **Blocked**, listing the unresolved `must` comments and human feedback.
-6. Otherwise run the implementer with `address.md`, resuming its session in the ticket checkout, and passing the reviewer's comments, the human PR feedback and new human ticket comments. Push if it committed, and reply on the PR with its summary (a reply with no code changes is allowed: the next reviewer sees why). The PR cursor moves past the feedback it was given. Start the next round.
+3. `approve` with no `must` comments → go to **checks**.
+4. If this was round `review.max_rounds` → **Blocked**, listing the unresolved `must` comments.
+5. Otherwise run the implementer with `address.md`, resuming its session in the ticket checkout, and passing the reviewer's comments and new human ticket comments. Push if it committed, and reply on the PR with its summary (a reply with no code changes is allowed: the next reviewer sees why). Start the next round.
 
 Steps are recorded per round (`review` → `address` → `review` …), with the reviewed SHA and the posted review id, so a run that stops mid-round doesn't run or post the same review twice.
 
@@ -465,12 +465,11 @@ For the PR's **head SHA**:
 5. **After a fix:** if it committed, push, reply on the PR, and go back to review: a **re-review** of the fix. It only takes a `review.max_rounds` slot if it requests changes. Then checks run again on the new head. A fix that commits nothing goes **Blocked** with the implementer's explanation (e.g. a flaky test or an infrastructure problem).
 
 ### 8.5 Merge
-1. **New human PR feedback** since the run's PR cursor goes to an address pass and back through review and checks first. A human's "wait" on the PR is never merged over.
-2. **Base sync:** fetch, and if `origin/<base>` isn't an ancestor of the branch, merge it in. Gosha does this in the bare clone with `git merge-tree --write-tree` and `git commit-tree` (as the bot identity), so it still never runs git in an agent's checkout. A clean merge is pushed and goes back to checks (no review: the PR's own change is the same). The ticket checkout is removed so the next agent pass starts from the merge commit.
-3. **Conflicts** are a check round: Gosha rebuilds the ticket checkout from the branch (a fresh clone, which carries the latest base), and the implementer runs `git merge origin/<base>`, resolves the conflicted files and commits the merge. Gosha checks that the base is now an ancestor of the branch (otherwise **Blocked**), pushes, and the change goes through re-review and checks.
-4. **Merge** through the API with `github.merge_method` (squash by default), title `NXT-12: <title> (#<n>)`, **with `sha` = the head commit that was checked**. If anything was pushed after the checks ran, GitHub refuses the merge. Gosha only pushes after a check verdict through the steps above, so that push was someone else's: the ticket goes **Blocked** rather than merging code nobody checked.
-5. The merge commit is recorded at once, so a run that stops after merging finishes with cleanup and delivery on the next pass instead of being mistaken for a merge by hand.
-6. Delete the branch and remove the checkout, then watch the deploy (§8.7) or deliver (§8.8).
+1. **Base sync:** fetch, and if `origin/<base>` isn't an ancestor of the branch, merge it in. Gosha does this in the bare clone with `git merge-tree --write-tree` and `git commit-tree` (as the bot identity), so it still never runs git in an agent's checkout. A clean merge is pushed and goes back to checks (no review: the PR's own change is the same). The ticket checkout is removed so the next agent pass starts from the merge commit.
+2. **Conflicts** are a check round: Gosha rebuilds the ticket checkout from the branch (a fresh clone, which carries the latest base), and the implementer runs `git merge origin/<base>`, resolves the conflicted files and commits the merge. Gosha checks that the base is now an ancestor of the branch (otherwise **Blocked**), pushes, and the change goes through re-review and checks.
+3. **Merge** through the API with `github.merge_method` (squash by default), title `NXT-12: <title> (#<n>)`, **with `sha` = the head commit that was checked**. If anything was pushed after the checks ran, GitHub refuses the merge. Gosha only pushes after a check verdict through the steps above, so that push was someone else's: the ticket goes **Blocked** rather than merging code nobody checked.
+4. The merge commit is recorded at once, so a run that stops after merging finishes with cleanup and delivery on the next pass instead of being mistaken for a merge by hand.
+5. Delete the branch and remove the ticket's workspace, then watch the deploy (§8.7) or deliver (§8.8).
 
 ### 8.6 Identities
 
@@ -691,7 +690,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - Linear states: Ready / In Progress / In Review / Blocked, with default names that can be overridden. Done and Canceled are recognised by state type. Only humans move tickets to Done. Backlog/Todo pause, Canceled abandons.
 - Agents run unattended in `dontask` mode: an allowlist confines file tools to the checkout and temp directory, and Claude Code's OS-level sandbox confines Bash and blocks `~/.gosha`. Without a sandbox, Gosha refuses to run agents unless explicitly opted out. (Changed after M0: bypass let file tools write outside the sandbox.) The global `agent.sandbox` switch picks both the sandbox and the mode: off means `auto` mode; there's no per-project mode and no bypass. (M7)
 - Linear identity: an OAuth app using the `client_credentials` grant; no personal key, no browser flow. (Changed after M0.)
-- Feedback model: review, human PR comments, CI failures and conflicts all go through the address step, limited by `review.max_rounds` and `checks.max_rounds`.
+- Feedback model: review, CI failures and conflicts all go through the address step, limited by `review.max_rounds` and `checks.max_rounds`. The two limits stay separate: a shared one would let a long review loop use up the rounds CI needs. (M7)
 - Notion mirror: page tree → file tree (`README.md` for pages with children, `INDEX.md` map). Databases aren't mirrored for now.
 - Host-agnostic: macOS and Linux. Gosha runs as an existing regular user (the installing user by default) and refuses root; it never creates OS accounts. `gosha service install|uninstall|start|stop|restart|status` manages the systemd or launchd unit.
 - Module path: `github.com/galimru/gosha`.
@@ -709,12 +708,12 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - Gosha runs no repo-defined commands outside the sandbox: there's no `agent.setup`, and agents install dependencies themselves. (M7)
 - Per-project Claude config dir (`projects/<project>/claude/`); prompts go to claude on stdin. (M2)
 - The reviewer runs in a fresh clone of the pushed head each round, so nothing it does reaches the implementer's checkout or the branch. It's read-only: it reads the diff with `git diff`, and CI runs the tests. (M7) Each round is a new session, but it's shown the last round's findings and the implementer's reply. (M3)
-- Human PR feedback (comments, inline comments, review bodies from non-bots) is collected before every review verdict from a per-run cursor, and forces an address pass. Address passes reply on the PR with the implementer's summary. (M3)
+- Address passes reply on the PR with the implementer's summary. (M3) Human PR comments aren't read: Linear is the only channel for instructions. (M7)
 - `agent.timeout` is one budget per pickup, shared by every agent pass in it. (M3) It counts agent passes only, not waiting for CI. (M4)
 - Checks are waited for in-line; the ticket stays the project's active ticket meanwhile. A run is parked only while Blocked. (M4)
 - A fix for failed checks or conflicts goes back through review (a re-review that only takes a review round if it requests changes), then checks. (M4)
 - The base is merged into the branch in the bare clone (`git merge-tree`, git ≥ 2.38); conflicts are resolved by the implementer in a fresh checkout and count as a check round. (M4)
-- Merges are pinned to the checked head; a push by anyone else after the checks blocks the ticket instead of being merged. New human PR feedback is addressed before merging. (M4)
+- Merges are pinned to the checked head; a push by anyone else after the checks blocks the ticket instead of being merged. (M4)
 - The Notion mirror is refreshed before every pickup and every 15 minutes when idle. Search detects changes; the tree comes from each page's child page blocks; only changed pages are fetched. Page bodies are cached with links as page ids, so renames and moves rewrite links without re-fetching. (M5)
 - Notion without access to the root page pauses the project; any other Notion failure uses the last mirror. Each pickup gets its own frozen copy in the ticket's workspace. (M5)
 - A project resumes only after the config, Linear and Notion checks all pass, so a pause for one reason isn't cleared by another check passing. (M5)

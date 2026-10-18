@@ -66,7 +66,6 @@ type prOps interface {
 	CreatePR(ctx context.Context, branch, base, title, body string) (*github.PR, error)
 	CreateReview(ctx context.Context, number int, sha, body string, comments []github.ReviewComment) (int64, error)
 	CreateComment(ctx context.Context, number int, body string) error
-	HumanFeedback(ctx context.Context, number int, since time.Time) ([]github.Feedback, error)
 	Checks(ctx context.Context, sha string) ([]github.Check, error)
 	JobLog(ctx context.Context, jobID int64) (string, error)
 	Merge(ctx context.Context, number int, sha, method, title, message string) (string, error)

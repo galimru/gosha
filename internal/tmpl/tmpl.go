@@ -42,7 +42,7 @@ type Context struct {
 }
 
 type Feedback struct {
-	// Review is the reviewer's comments and human PR feedback (address).
+	// Review is the reviewer's comments (address).
 	Review string
 	// CI is the failed checks with the failing part of their logs (address).
 	CI string

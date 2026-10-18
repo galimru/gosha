@@ -17,8 +17,8 @@ import (
 const roleAddress = "address"
 
 // resumeOpen continues a run whose PR is open (DESIGN §8.1, §8.3). From
-// Ready, the round limit resets; new ticket comments or human PR feedback
-// go to the implementer first, otherwise the PR gets a fresh review. An
+// Ready, the round limit resets; new ticket comments go to the
+// implementer first, otherwise the PR gets a fresh review. An
 // interrupted run continues at the step it stopped at.
 func (t *ticket) resumeOpen(ctx context.Context) error {
 	if !t.fromReady {
@@ -39,11 +39,7 @@ func (t *ticket) resumeOpen(ctx context.Context) error {
 	}
 	t.run.ReviewRound, t.run.CheckRound = 0, 0
 	t.run.CheckedSHA, t.run.ChecksResult = "", ""
-	fb, err := t.prs.HumanFeedback(ctx, t.run.PRNumber, t.run.PRCursor)
-	if err != nil {
-		return err
-	}
-	if len(t.comments) > 0 || len(fb) > 0 {
+	if len(t.comments) > 0 {
 		return t.reviewLoop(ctx, true)
 	}
 	t.run.ReviewedSHA, t.run.ReviewID = "", 0
@@ -62,12 +58,12 @@ func (t *ticket) reviewLoop(ctx context.Context, addressFirst bool) error {
 	limit := t.p.Config.Review.MaxRounds
 	for {
 		before, recheck := t.run.ReviewRound, t.recheck
-		res, fb, err := t.review(ctx)
+		res, err := t.review(ctx)
 		t.recheck = false
 		if err != nil || res == nil {
 			return err
 		}
-		if res.Verdict == agent.VerdictApprove && res.Count(agent.SeverityMust) == 0 && len(fb) == 0 {
+		if res.Verdict == agent.VerdictApprove && res.Count(agent.SeverityMust) == 0 {
 			if recheck {
 				t.run.ReviewRound = before
 			}
@@ -75,7 +71,7 @@ func (t *ticket) reviewLoop(ctx context.Context, addressFirst bool) error {
 			return t.checks(ctx)
 		}
 		if t.run.ReviewRound >= limit {
-			return t.block(ctx, roundsExhausted(limit, res, fb), nil)
+			return t.block(ctx, roundsExhausted(limit, res), nil)
 		}
 		if err := t.address(ctx); err != nil || t.run.Step == StepBlocked {
 			return err
@@ -84,18 +80,18 @@ func (t *ticket) reviewLoop(ctx context.Context, addressFirst bool) error {
 }
 
 // review runs one review round on the branch head and posts it as a PR
-// review. It returns the result and any new human PR feedback, or a nil
-// result when the step ended (Blocked, usage limit, shutdown).
+// review. It returns a nil result when the step ended (Blocked, usage
+// limit, shutdown).
 //
 // A review already run or posted for the same head is reused, so a run
 // that stopped mid-round doesn't review or post twice.
-func (t *ticket) review(ctx context.Context) (*agent.ReviewerResult, []github.Feedback, error) {
+func (t *ticket) review(ctx context.Context) (*agent.ReviewerResult, error) {
 	if err := t.save(ctx, StepReview); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	head, err := t.p.Repo.RevParse(ctx, "refs/heads/"+t.run.Branch)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	var res *agent.ReviewerResult
 	if t.run.ReviewedSHA == head && t.run.ReviewResult != "" {
@@ -106,7 +102,7 @@ func (t *ticket) review(ctx context.Context) (*agent.ReviewerResult, []github.Fe
 	if res == nil {
 		t.run.ReviewID = 0
 		if res, err = t.runReviewer(ctx, head); res == nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
 	limit := t.p.Config.Review.MaxRounds
@@ -114,25 +110,18 @@ func (t *ticket) review(ctx context.Context) (*agent.ReviewerResult, []github.Fe
 		round := t.run.ReviewRound + 1
 		id, err := t.prs.CreateReview(ctx, t.run.PRNumber, head, t.reviewBody(res, t.roundLabel(round, limit)), t.reviewComments(res))
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		t.run.ReviewID, t.run.ReviewRound = id, round
 		t.report.addReview(t.roundLabel(round, limit), res)
 		if err := t.save(ctx, StepReview); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-	}
-	fb, err := t.prs.HumanFeedback(ctx, t.run.PRNumber, t.run.PRCursor)
-	if err != nil {
-		return nil, nil, err
 	}
 	msg := fmt.Sprintf("%s · %s %s · %d must, %d should, %d nit", t.issue.Identifier, strings.TrimPrefix(t.roundLabel(t.run.ReviewRound, limit), "Gosha "),
 		verdictMark(res), res.Count(agent.SeverityMust), res.Count(agent.SeverityShould), res.Count(agent.SeverityNit))
-	if len(fb) > 0 {
-		msg += fmt.Sprintf(" · %d new human PR comments", len(fb))
-	}
 	t.notify(msg, t.prLink(), t.ticketLink())
-	return res, fb, nil
+	return res, nil
 }
 
 // runReviewer runs the reviewer in a fresh clone of the branch head. It
@@ -188,8 +177,7 @@ func (t *ticket) previousRound() string {
 }
 
 // address runs the implementer on the feedback: the last review (if it was
-// for the current head), human PR feedback since the cursor and new human
-// ticket comments. It pushes what changed, replies on the PR and leaves the
+// for the current head) and new human ticket comments. It pushes what changed, replies on the PR and leaves the
 // run ready for the next review round.
 func (t *ticket) address(ctx context.Context) error {
 	if err := t.save(ctx, StepAddress); err != nil {
@@ -203,12 +191,8 @@ func (t *ticket) address(ctx context.Context) error {
 	if t.run.ReviewedSHA == head && t.run.ReviewResult != "" {
 		rev, _ = agent.ReadReview(t.run.ReviewResult)
 	}
-	fb, err := t.prs.HumanFeedback(ctx, t.run.PRNumber, t.run.PRCursor)
-	if err != nil {
-		return err
-	}
 	round := max(t.run.ReviewRound, 1)
-	res, changed, err := t.feedbackPass(ctx, round, tmpl.Feedback{Review: renderFeedback(rev, fb)})
+	res, changed, err := t.feedbackPass(ctx, round, tmpl.Feedback{Review: renderFeedback(rev)})
 	if res == nil {
 		return err
 	}
@@ -223,19 +207,14 @@ func (t *ticket) address(ctx context.Context) error {
 	if err := t.prs.CreateComment(ctx, t.run.PRNumber, reply); err != nil {
 		return err
 	}
-	for _, f := range fb {
-		if f.At.After(t.run.PRCursor) {
-			t.run.PRCursor = f.At
-		}
-	}
 	t.run.LastReply = res.Summary
 	t.run.ReviewedSHA, t.run.ReviewID = "", 0
 	if err := t.save(ctx, StepReview); err != nil {
 		return err
 	}
-	n := len(fb)
+	n := 0
 	if rev != nil {
-		n += len(rev.Comments)
+		n = len(rev.Comments)
 	}
 	what := "no code changes"
 	if changed {
@@ -337,19 +316,13 @@ func verdictMark(res *agent.ReviewerResult) string {
 }
 
 // renderFeedback is .Feedback.Review for the address prompt.
-func renderFeedback(rev *agent.ReviewerResult, fb []github.Feedback) string {
+func renderFeedback(rev *agent.ReviewerResult) string {
+	if rev == nil {
+		return ""
+	}
 	var b strings.Builder
-	if rev != nil {
-		fmt.Fprintf(&b, "## From the reviewer (%s)\n\n%s\n", rev.Verdict, strings.TrimSpace(rev.Summary))
-		writeComments(&b, rev.Comments)
-	}
-	if len(fb) > 0 {
-		if b.Len() > 0 {
-			b.WriteString("\n")
-		}
-		b.WriteString("## From people on the pull request\n\nHuman feedback takes priority over the reviewer's.\n\n")
-		writeHumanFeedback(&b, fb)
-	}
+	fmt.Fprintf(&b, "## From the reviewer (%s)\n\n%s\n", rev.Verdict, strings.TrimSpace(rev.Summary))
+	writeComments(&b, rev.Comments)
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -363,18 +336,8 @@ func writeComments(b *strings.Builder, cs []agent.ReviewComment) {
 	}
 }
 
-func writeHumanFeedback(b *strings.Builder, fb []github.Feedback) {
-	for _, f := range fb {
-		where := f.Kind
-		if f.Path != "" {
-			where += " on " + location(f.Path, f.Line)
-		}
-		fmt.Fprintf(b, "- **%s** (%s): %s\n", f.Author, where, indent(f.Body))
-	}
-}
-
 // roundsExhausted is the Blocked reason when the review limit is hit.
-func roundsExhausted(limit int, res *agent.ReviewerResult, fb []github.Feedback) string {
+func roundsExhausted(limit int, res *agent.ReviewerResult) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "The pull request still isn't approved after %d review rounds (`review.max_rounds`).\n", limit)
 	var must []agent.ReviewComment
@@ -388,10 +351,6 @@ func roundsExhausted(limit int, res *agent.ReviewerResult, fb []github.Feedback)
 		writeComments(&b, must)
 	} else if res.Verdict != agent.VerdictApprove {
 		b.WriteString("\nThe reviewer's last verdict: " + strings.TrimSpace(res.Summary) + "\n")
-	}
-	if len(fb) > 0 {
-		b.WriteString("\n**Human PR comments not yet addressed**\n\n")
-		writeHumanFeedback(&b, fb)
 	}
 	return b.String()
 }

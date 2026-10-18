@@ -4,10 +4,8 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	gh "github.com/google/go-github/v88/github"
 )
@@ -100,67 +98,4 @@ func (i *Installation) CreateComment(ctx context.Context, number int, body strin
 		return fmt.Errorf("github comment on PR #%d: %w", number, err)
 	}
 	return nil
-}
-
-// Feedback kinds.
-const (
-	FeedbackComment = "comment"        // on the PR conversation
-	FeedbackInline  = "inline comment" // on a line of the diff
-	FeedbackReview  = "review"         // a review's body
-)
-
-// Feedback is one piece of human feedback on a PR.
-type Feedback struct {
-	Author string
-	Kind   string
-	Path   string
-	Line   int
-	Body   string
-	URL    string
-	At     time.Time
-}
-
-// HumanFeedback lists what people (not bots, Gosha included) wrote on the
-// PR after since, oldest first: conversation comments, inline comments and
-// review bodies.
-func (i *Installation) HumanFeedback(ctx context.Context, number int, since time.Time) ([]Feedback, error) {
-	var out []Feedback
-	add := func(u *gh.User, f Feedback) {
-		if u.GetType() == "Bot" || strings.TrimSpace(f.Body) == "" || !f.At.After(since) {
-			return
-		}
-		f.Author = u.GetLogin()
-		out = append(out, f)
-	}
-	var opts *gh.IssueListCommentsOptions
-	if !since.IsZero() {
-		opts = &gh.IssueListCommentsOptions{Since: gh.Ptr(since)}
-	}
-	for c, err := range i.api.Issues.ListCommentsIter(ctx, i.Repo.Owner, i.Repo.Name, number, opts) {
-		if err != nil {
-			return nil, fmt.Errorf("github comments on PR #%d: %w", number, err)
-		}
-		add(c.GetUser(), Feedback{Kind: FeedbackComment, Body: c.GetBody(), URL: c.GetHTMLURL(), At: c.GetCreatedAt().Time})
-	}
-	for c, err := range i.api.PullRequests.ListCommentsIter(ctx, i.Repo.Owner, i.Repo.Name, number, &gh.PullRequestListCommentsOptions{Since: since}) {
-		if err != nil {
-			return nil, fmt.Errorf("github inline comments on PR #%d: %w", number, err)
-		}
-		line := c.GetLine()
-		if line == 0 {
-			line = c.GetOriginalLine()
-		}
-		add(c.GetUser(), Feedback{Kind: FeedbackInline, Path: c.GetPath(), Line: line, Body: c.GetBody(), URL: c.GetHTMLURL(), At: c.GetCreatedAt().Time})
-	}
-	for r, err := range i.api.PullRequests.ListReviewsIter(ctx, i.Repo.Owner, i.Repo.Name, number, nil) {
-		if err != nil {
-			return nil, fmt.Errorf("github reviews on PR #%d: %w", number, err)
-		}
-		if r.GetState() == "PENDING" {
-			continue
-		}
-		add(r.GetUser(), Feedback{Kind: FeedbackReview, Body: r.GetBody(), URL: r.GetHTMLURL(), At: r.GetSubmittedAt().Time})
-	}
-	slices.SortStableFunc(out, func(a, b Feedback) int { return a.At.Compare(b.At) })
-	return out, nil
 }

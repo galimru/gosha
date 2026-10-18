@@ -61,8 +61,6 @@ type fakePRs struct {
 	prs      map[int]*github.PR
 	reviews  []postedReview
 	comments []string
-	// feedback is human PR feedback; HumanFeedback returns what's after since.
-	feedback []github.Feedback
 	// checks returns the checks on a head for each call. Without it, Gosha
 	// is stopped while it waits for checks, as by a shutdown, so the run
 	// stays open at StepChecks.
@@ -138,16 +136,6 @@ func (f *fakePRs) CreateReview(_ context.Context, _ int, sha, body string, cs []
 func (f *fakePRs) CreateComment(_ context.Context, _ int, body string) error {
 	f.comments = append(f.comments, body)
 	return nil
-}
-
-func (f *fakePRs) HumanFeedback(_ context.Context, _ int, since time.Time) ([]github.Feedback, error) {
-	var out []github.Feedback
-	for _, fb := range f.feedback {
-		if fb.At.After(since) {
-			out = append(out, fb)
-		}
-	}
-	return out, nil
 }
 
 func (f *fakePRs) Token(context.Context) (string, error) { return "", nil }
