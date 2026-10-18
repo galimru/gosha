@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // stepNames are the steps in plain words, for the Blocked comment.
@@ -65,7 +66,7 @@ func (t *ticket) blockWith(ctx context.Context, reason string, questions []strin
 	if err := t.issues.Transition(ctx, t.issue.ID, t.states.Blocked.ID); err != nil {
 		return err
 	}
-	t.run.BlockedReason = reason
+	t.run.BlockedReason, t.run.BlockedAt = reason, time.Now()
 	if err := t.save(ctx, StepBlocked); err != nil {
 		return err
 	}

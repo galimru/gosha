@@ -545,6 +545,7 @@ A Telegram bot posts **alerts** to a **private channel**: things a human may nee
 - Alerts go through an async queue, so a Telegram outage never blocks or fails delivery. Sending retries with backoff, respects Telegram rate limits, and drops alerts after ~1h.
 - Messages use HTML formatting, with links to the Linear ticket and PR, and are kept short for phone reading.
 - **Liveness:** Gosha can't report that it has died. With `heartbeat_url` set (§5.1), the daemon GETs that URL every 30s while it runs, so a dead-man's-switch monitor (e.g. a healthchecks service) alerts when the pings stop. The daily digest is a summary, not a liveness signal.
+- **Daily digest:** the daemon sends it at `telegram.digest_at`, local time (`gosha run` doesn't). It counts the previous day's delivered runs and runs that went Blocked, and the Ready tickets each project's last poll found (`?` until a project has been polled), with a line per project when there's more than one. It's sent once a day: one missed while Gosha was down is sent late that same day, and a restart doesn't send it twice.
 - Telegram is **output only**. Gosha takes instructions only from Linear.
 
 ## 10. Persistence & recovery

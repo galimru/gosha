@@ -189,8 +189,10 @@ type Run struct {
 	ImplSession string
 	BaseBranch  string
 	PRURL       string
-	// BlockedReason is why the run last went Blocked, while it's blocked.
+	// BlockedReason is why the run last went Blocked, while it's blocked,
+	// and BlockedAt when it last went Blocked.
 	BlockedReason string
+	BlockedAt     time.Time
 	// AgentRuns counts agent passes, numbering the transcripts.
 	AgentRuns int
 	// ReviewedSHA is the head the last review ran on, and ReviewID the
@@ -235,12 +237,12 @@ func (s *Store) CreateRun(ctx context.Context, r *Run) error {
 func (s *Store) UpdateRun(ctx context.Context, r *Run) error {
 	ts := now()
 	_, err := s.db.ExecContext(ctx, `UPDATE runs SET mode = ?, branch = ?, pr_number = ?, step = ?, review_round = ?,
-		check_round = ?, impl_session = ?, base_branch = ?, pr_url = ?, blocked_reason = ?, agent_runs = ?,
+		check_round = ?, impl_session = ?, base_branch = ?, pr_url = ?, blocked_reason = ?, blocked_at = ?, agent_runs = ?,
 		reviewed_sha = ?, review_id = ?, review_result = ?, last_reply = ?,
 		checked_sha = ?, checks_result = ?, merge_sha = ?, report = ?, updated_at = ?
 		WHERE id = ?`,
 		r.Mode, r.Branch, r.PRNumber, r.Step, r.ReviewRound, r.CheckRound, r.ImplSession,
-		r.BaseBranch, r.PRURL, r.BlockedReason, r.AgentRuns,
+		r.BaseBranch, r.PRURL, r.BlockedReason, formatTime(r.BlockedAt), r.AgentRuns,
 		r.ReviewedSHA, r.ReviewID, r.ReviewResult, r.LastReply,
 		r.CheckedSHA, r.ChecksResult, r.MergeSHA, r.Report, ts, r.ID)
 	if err != nil {
@@ -258,20 +260,20 @@ func (s *Store) FinishRun(ctx context.Context, id int64, outcome string) error {
 }
 
 const runColumns = `id, project, ticket_id, mode, branch, pr_number, step, review_round, check_round, impl_session,
-	base_branch, pr_url, blocked_reason, agent_runs, reviewed_sha, review_id, review_result, last_reply,
+	base_branch, pr_url, blocked_reason, blocked_at, agent_runs, reviewed_sha, review_id, review_result, last_reply,
 	checked_sha, checks_result, merge_sha, report, outcome, created_at, updated_at`
 
 func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 	var r Run
-	var created, updated string
+	var created, updated, blocked string
 	err := row.Scan(&r.ID, &r.Project, &r.TicketID, &r.Mode, &r.Branch, &r.PRNumber, &r.Step,
-		&r.ReviewRound, &r.CheckRound, &r.ImplSession, &r.BaseBranch, &r.PRURL, &r.BlockedReason, &r.AgentRuns,
+		&r.ReviewRound, &r.CheckRound, &r.ImplSession, &r.BaseBranch, &r.PRURL, &r.BlockedReason, &blocked, &r.AgentRuns,
 		&r.ReviewedSHA, &r.ReviewID, &r.ReviewResult, &r.LastReply,
 		&r.CheckedSHA, &r.ChecksResult, &r.MergeSHA, &r.Report, &r.Outcome, &created, &updated)
 	if err != nil {
 		return nil, err
 	}
-	r.CreatedAt, r.UpdatedAt = parseTime(created), parseTime(updated)
+	r.CreatedAt, r.UpdatedAt, r.BlockedAt = parseTime(created), parseTime(updated), parseTime(blocked)
 	return &r, nil
 }
 
@@ -321,6 +323,36 @@ func (s *Store) OpenRuns(ctx context.Context) ([]*Run, error) {
 			return nil, err
 		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DayCounts is what a project's runs did in a time window, for the digest.
+type DayCounts struct {
+	Delivered, Blocked int
+}
+
+// Counts reports, per project, the runs delivered and the runs that went
+// Blocked in [from, to). Times are compared as times, not as text: stored
+// times have a varying number of fraction digits.
+func (s *Store) Counts(ctx context.Context, from, to time.Time) (map[string]DayCounts, error) {
+	f, t := formatTime(from), formatTime(to)
+	rows, err := s.db.QueryContext(ctx, `SELECT project,
+		SUM(outcome = ? AND julianday(finished_at) >= julianday(?) AND julianday(finished_at) < julianday(?)),
+		SUM(blocked_at != '' AND julianday(blocked_at) >= julianday(?) AND julianday(blocked_at) < julianday(?))
+		FROM runs GROUP BY project`, OutcomeDelivered, f, t, f, t)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]DayCounts{}
+	for rows.Next() {
+		var p string
+		var c DayCounts
+		if err := rows.Scan(&p, &c.Delivered, &c.Blocked); err != nil {
+			return nil, err
+		}
+		out[p] = c
 	}
 	return out, rows.Err()
 }

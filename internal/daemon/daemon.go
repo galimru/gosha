@@ -42,6 +42,9 @@ type Daemon struct {
 	// Limit is the usage-limit pause shared by every project: no pass
 	// starts while it lasts.
 	Limit interface{ Until() time.Time }
+	// Jobs run alongside the supervisors until the daemon stops (the daily
+	// digest, cleanup). Each must return once its context ends.
+	Jobs []func(context.Context)
 
 	// Poll is how often an idle project looks for Ready tickets, Rescan how
 	// often projects/ is checked for added or removed projects, and
@@ -74,12 +77,15 @@ func (d *Daemon) redact(s string) string {
 func (d *Daemon) Run(ctx context.Context) error {
 	d.Log.Info("daemon started", "poll", d.poll())
 	go d.Heartbeat(ctx)
+	var wg sync.WaitGroup
+	for _, job := range d.Jobs {
+		wg.Go(func() { job(ctx) })
+	}
 	type sup struct {
 		cancel context.CancelFunc
 		done   chan struct{}
 	}
 	running := map[string]*sup{}
-	var wg sync.WaitGroup
 	tick := time.NewTicker(d.rescan())
 	defer tick.Stop()
 	for {

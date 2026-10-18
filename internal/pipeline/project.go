@@ -45,6 +45,10 @@ type Env struct {
 
 	slotsOnce sync.Once
 	slots     chan struct{}
+
+	// ready is each project's Ready count from its last poll.
+	readyMu sync.Mutex
+	ready   map[string]int
 }
 
 // acquireSlot waits out a usage limit, then for one of the concurrency

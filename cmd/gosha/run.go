@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -73,8 +74,10 @@ func (a *app) runCmd() *cobra.Command {
 	return cmd
 }
 
-// daemon wires the pipeline into a supervisor.
+// daemon wires the pipeline into the daemon. Its Jobs run only under
+// gosha daemon, not gosha run.
 func (a *app) daemon(env *pipeline.Env) *daemon.Daemon {
 	return &daemon.Daemon{Home: a.home, Pass: env.Pass, Notify: env.Notify, Log: a.log,
-		Redact: a.redact, HeartbeatURL: env.Global.HeartbeatURL, Limit: env.Limit}
+		Redact: a.redact, HeartbeatURL: env.Global.HeartbeatURL, Limit: env.Limit,
+		Jobs: []func(context.Context){env.DigestLoop}}
 }

@@ -238,3 +238,39 @@ func TestLastDelivered(t *testing.T) {
 		t.Fatalf("LastDelivered = %+v, %v", got, err)
 	}
 }
+
+func TestCounts(t *testing.T) {
+	ctx := context.Background()
+	s, _ := open(t)
+	day := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
+	add := func(project string, blockedAt time.Time, outcome string) {
+		r := &Run{Project: project, TicketID: "T", Mode: "fresh"}
+		if err := s.CreateRun(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		r.BlockedAt = blockedAt
+		if err := s.UpdateRun(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		if outcome != "" {
+			if err := s.FinishRun(ctx, r.ID, outcome); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	add("a", day.Add(9*time.Hour+500*time.Millisecond), "")
+	add("a", time.Time{}, OutcomeDelivered) // finished now: outside the window
+	add("b", day.Add(-time.Nanosecond), "")
+	add("b", day.Add(24*time.Hour), "")
+	got, err := s.Counts(ctx, day, day.Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["a"] != (DayCounts{Blocked: 1}) || got["b"] != (DayCounts{}) {
+		t.Errorf("counts = %+v", got)
+	}
+	got, _ = s.Counts(ctx, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	if got["a"].Delivered != 1 {
+		t.Errorf("delivered = %+v", got)
+	}
+}

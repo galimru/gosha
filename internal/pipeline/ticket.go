@@ -159,6 +159,9 @@ func (e *Env) Pass(ctx context.Context, name, only string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
+		if only == "" {
+			e.noteReady(name, len(cands))
+		}
 		for _, d := range Plan(p.Config, lin.States, cands) {
 			if d.Action == Pickup {
 				i := slices.IndexFunc(cands, func(c Candidate) bool { return c.Issue.ID == d.Issue.ID })
