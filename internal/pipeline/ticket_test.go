@@ -287,7 +287,7 @@ func newHarness(t *testing.T, cfg string) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "gosha.db"))
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "gosha.db"), "test")
 	if err != nil {
 		t.Fatal(err)
 	}

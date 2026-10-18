@@ -45,7 +45,7 @@ func (a *app) statusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			st, err := store.Open(ctx, a.home.DB())
+			st, err := store.Open(ctx, a.home.DB(), version)
 			if err != nil {
 				return err
 			}

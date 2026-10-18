@@ -138,7 +138,7 @@ func (a *app) env(ctx context.Context) (*pipeline.Env, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, err := store.Open(ctx, a.home.DB())
+	st, err := store.Open(ctx, a.home.DB(), version)
 	if err != nil {
 		return nil, err
 	}

@@ -542,7 +542,9 @@ SQLite at `~/.gosha/gosha.db` stores runs (project, ticket, mode, PR, branch, cu
 
 On startup, for each ticket that is In Progress in Linear **and** has an open run in the db, Gosha re-enters the pipeline at its current step. Steps are idempotent, so they reconcile with the real state of the PR and checks. A ticket that is In Progress with no run record is left untouched (a human moved it there).
 
-**Schema migrations** are numbered SQL files built into the binary, applied in order at startup. Once released, a migration is never edited, only followed by a new one, so every `gosha upgrade` (§11.4) keeps the existing `~/.gosha` working. Before applying any, Gosha copies `gosha.db` to `gosha.db.bak-<old version>`. A database newer than the binary (after a downgrade) is refused with a message naming the release it needs.
+**Schema migrations** are numbered SQL files built into the binary, applied in order at startup, starting from one baseline (`001_init.sql`). They're append-only: a migration is never edited, only followed by a new one, so every `gosha upgrade` (§11.4) keeps the existing `~/.gosha` working. The database records the gosha version that last migrated it. Before applying any migration to an existing database, Gosha writes a consistent copy to `gosha.db.bak-<that version>`. A database newer than the binary (after a downgrade) is refused with a message naming the release it needs.
+
+Daemon-wide values (the usage-limit pause, the last digest date) live in the same database, in a small key/value table.
 
 ## 11. Host & operations
 

@@ -117,7 +117,7 @@ func (a *app) removeCmd() *cobra.Command {
 					return err
 				}
 			}
-			st, err := store.Open(cmd.Context(), a.home.DB())
+			st, err := store.Open(cmd.Context(), a.home.DB(), version)
 			if err != nil {
 				return err
 			}
@@ -148,7 +148,7 @@ func (a *app) listCmd() *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "no projects; add one with `gosha add <repo-url>`")
 				return nil
 			}
-			st, err := store.Open(ctx, a.home.DB())
+			st, err := store.Open(ctx, a.home.DB(), version)
 			if err != nil {
 				return err
 			}
