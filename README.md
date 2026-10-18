@@ -14,22 +14,19 @@
 
 ---
 
-Gosha watches a Linear team for tickets moved to **Ready**. For each one, a Claude Code agent implements the change, working from the project's specs mirrored from Notion. A separate agent reviews it, and Gosha fixes what the review and CI find, merges, and reports the result back on the ticket.
+Gosha turns your planned work into shipped code. You plan in Linear and write specs in Notion. When a ticket is **Ready**, Gosha takes it from there: it writes the change, has it reviewed, gets CI green, merges it, and tells you on the ticket what shipped.
 
-## How it works
+You decide what gets built and whether it's accepted. Gosha does everything in between, on your own machine or server.
 
-1. You write specs in Notion and tickets in Linear, then move a ticket to **Ready**.
-2. Gosha picks it up and an agent implements it, using the ticket and the project's Notion pages as context.
-3. A separate reviewer agent checks the change, and the implementer addresses its comments.
-4. Gosha waits for the project's CI, feeding any failures back to the implementer.
-5. Gosha merges the pull request and posts a summary on the ticket, moving it to **In Review** for you to accept.
+## What you get
 
-- **Linear is the only place you give instructions:** ticket states and ticket comments. Move a ticket to Backlog to pause it, or to Canceled to abandon it.
-- **Gosha acts as itself:** a GitHub App and a Linear OAuth app, never your personal accounts.
-- **Independent verification:** every change gets a separate reviewer agent and the project's own CI before it's merged.
-- **Telegram alerts:** a project paused, a ticket Blocked or delivered, a usage limit, a crash, and a daily digest.
-- **Multi-project:** one service, with each project configured from `.gosha/` in its own repo.
-- **Sandboxed agents:** they run in Claude Code's OS sandbox and never get GitHub, Linear or Gosha credentials.
+- **You only use Linear:** move a ticket to Ready to start it, comment to guide it, move it to Backlog to pause it or to Canceled to drop it.
+- **Every change is checked twice:** a separate agent reviews it, and your own CI has to pass before anything is merged.
+- **Grounded in your specs:** agents read the ticket and the project's Notion pages, and ask on the ticket when something is unclear instead of guessing.
+- **Its own identity:** Gosha works through its own GitHub App and Linear app, never your personal accounts.
+- **Safe by default:** agents run in Claude Code's sandbox and never see your GitHub, Linear or Gosha credentials.
+- **Many projects, one service:** each project is configured from `.gosha/` in its own repo.
+- **Quiet unless it matters:** Telegram tells you when a ticket ships or needs you, plus a short daily digest.
 
 ## Requirements
 
