@@ -18,10 +18,13 @@ const (
 
 // ImplementerResult is the implementer's result file (DESIGN §7).
 type ImplementerResult struct {
-	Status        string   `json:"status"`
-	Summary       string   `json:"summary"`
-	Verification  string   `json:"verification"`
-	Assumptions   []string `json:"assumptions"`
+	Status       string   `json:"status"`
+	Summary      string   `json:"summary"`
+	Verification string   `json:"verification"`
+	Assumptions  []string `json:"assumptions"`
+	// LeftOut is what the ticket could be read to ask for but was
+	// deliberately not done, for the Delivered comment.
+	LeftOut       []string `json:"left_out"`
 	BlockedReason string   `json:"blocked_reason"`
 	Questions     []string `json:"questions"`
 }

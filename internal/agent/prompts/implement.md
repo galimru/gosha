@@ -5,7 +5,17 @@ You are implementing a Linear ticket in this repository. You are running unatten
 {{.Ticket.URL}}
 
 {{if .Ticket.Description}}{{.Ticket.Description}}{{else}}(no description){{end}}
-{{if .Ticket.Comments}}
+{{if .FollowUp.PR}}
+# This is a follow-up
+
+This ticket was already implemented in [PR #{{.FollowUp.PR}}]({{.FollowUp.URL}}), merged into `{{.BaseBranch}}`{{if .FollowUp.MergeSHA}} as `{{.FollowUp.MergeSHA}}`{{end}}. A human sent it back: the comments below say what's wrong or what to change now. Do only that, on top of the merged change; don't redo the ticket.
+{{if .FollowUp.Summary}}
+What the earlier change did:
+
+{{.FollowUp.Summary}}
+{{end}}{{if .FollowUp.Deploy}}
+Its deploy: {{.FollowUp.Deploy}}
+{{end}}{{end}}{{if .Ticket.Comments}}
 # Instructions from the ticket comments
 
 These comments were written by humans since the last run. They take priority over the description wherever the two disagree.
@@ -38,6 +48,7 @@ Write your result as JSON to `{{.ResultFile}}` (outside the repository), with ex
   "summary": "2-4 sentences: what changed and why",
   "verification": "what you ran to check it (tests, build, lint) and the outcome",
   "assumptions": ["anything you assumed that the ticket didn't say"],
+  "left_out": ["anything the ticket could be read to ask for that you deliberately didn't do, and why"],
   "blocked_reason": "only when blocked: what stops you, in plain words",
   "questions": ["only when blocked: what a human needs to answer"]
 }
