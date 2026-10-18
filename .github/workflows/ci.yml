@@ -19,4 +19,6 @@ jobs:
       - name: gofmt
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - run: go vet ./...
+      - name: shell scripts parse
+        run: sh -n install.sh && sh -n .github/scripts/next-version.sh
       - run: go test -race ./...
