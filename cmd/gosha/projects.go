@@ -10,7 +10,6 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-	"go.yaml.in/yaml/v3"
 
 	"github.com/galimru/gosha/internal/config"
 	"github.com/galimru/gosha/internal/gitx"
@@ -71,22 +70,13 @@ func (a *app) addCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			name, err := peekName(data)
+			cfg, warns, err := config.ParseProject(data, commit)
 			if err != nil {
 				return err
 			}
-			pp := a.home.Project(name)
+			pp := a.home.Project(cfg.Name)
 			if _, err := os.Stat(pp.Repo()); err == nil {
-				return fmt.Errorf("project %q is already registered (%s)", name, pp.Dir)
-			}
-			// Per-project secrets may be put in place before adding.
-			secrets, err := config.LoadSecrets(a.home, name, a.red)
-			if err != nil {
-				return err
-			}
-			cfg, warns, err := config.ParseProject(data, commit, secrets)
-			if err != nil {
-				return err
+				return fmt.Errorf("project %q is already registered (%s)", cfg.Name, pp.Dir)
 			}
 			if err := os.MkdirAll(pp.Dir, 0o700); err != nil {
 				return err
@@ -94,7 +84,7 @@ func (a *app) addCmd() *cobra.Command {
 			if err := os.Rename(r.Dir, pp.Repo()); err != nil {
 				return err
 			}
-			if _, err := env.Store.SetProjectState(ctx, store.ProjectState{Project: name, Status: store.StatusActive, Commit: commit}); err != nil {
+			if _, err := env.Store.SetProjectState(ctx, store.ProjectState{Project: cfg.Name, Status: store.StatusActive, Commit: commit}); err != nil {
 				return err
 			}
 			for _, w := range warns {
@@ -104,21 +94,6 @@ func (a *app) addCmd() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-// peekName reads just the project name, to find its directory before the
-// full config (which may need that project's secrets) is parsed.
-func peekName(data []byte) (string, error) {
-	var v struct {
-		Name string `yaml:"name"`
-	}
-	if err := yaml.Unmarshal(data, &v); err != nil {
-		return "", fmt.Errorf("%s: %w", config.ProjectFile, err)
-	}
-	if v.Name == "" || strings.ContainsAny(v.Name, `/\`) || strings.HasPrefix(v.Name, ".") {
-		return "", fmt.Errorf("%s: name: missing or invalid", config.ProjectFile)
-	}
-	return v.Name, nil
 }
 
 func (a *app) removeCmd() *cobra.Command {

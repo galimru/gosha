@@ -29,11 +29,11 @@ func (a *app) authCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			id, err := config.Expand("${LINEAR_CLIENT_ID}", secrets)
+			id, err := secrets.Require(config.KeyLinearClientID)
 			if err != nil {
 				return err
 			}
-			secret, err := config.Expand("${LINEAR_CLIENT_SECRET}", secrets)
+			secret, err := secrets.Require(config.KeyLinearClientSecret)
 			if err != nil {
 				return err
 			}

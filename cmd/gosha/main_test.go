@@ -27,14 +27,3 @@ func TestRunRefusesRoot(t *testing.T) {
 		t.Errorf("run as root: %v", err)
 	}
 }
-
-func TestPeekName(t *testing.T) {
-	if n, err := peekName([]byte("name: demo\nlinear: {team: X}\n")); err != nil || n != "demo" {
-		t.Errorf("peekName = %q, %v", n, err)
-	}
-	for _, bad := range []string{"linear: {}\n", "name: ../x\n", "name: .hidden\n", "name: ["} {
-		if _, err := peekName([]byte(bad)); err == nil {
-			t.Errorf("peekName(%q): expected an error", bad)
-		}
-	}
-}

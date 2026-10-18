@@ -105,12 +105,7 @@ func (a *app) doctor(ctx context.Context) []check {
 		}
 	}
 
-	secrets, err := config.LoadSecrets(a.home, "", a.red)
-	if err != nil {
-		add("fail", "%v", err)
-		return cs
-	}
-	g, err := config.LoadGlobal(a.home, secrets)
+	g, err := config.LoadGlobal(a.home)
 	if err != nil {
 		add("fail", "%v", err)
 		return cs

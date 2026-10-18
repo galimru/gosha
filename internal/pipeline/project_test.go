@@ -76,7 +76,7 @@ func TestReadConfigFailClosed(t *testing.T) {
 	u.commit(valid)
 
 	home := config.Home(t.TempDir())
-	os.WriteFile(home.Secrets(), []byte("LINEAR_CLIENT_ID=id\nLINEAR_CLIENT_SECRET=client-secret-value\nNOTION_TOKEN=notion-token\n"), 0o600)
+	os.WriteFile(home.Secrets(), []byte("LINEAR_CLIENT_ID=id\nLINEAR_CLIENT_SECRET=client-secret-value\nNOTION_TOKEN=notion-token\nCLAUDE_CODE_OAUTH_TOKEN=claude-token\n"), 0o600)
 	repo, err := gitx.CloneBare(ctx, "file://"+u.dir, home.Project("demo").Repo(), "")
 	if err != nil {
 		t.Fatal(err)

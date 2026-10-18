@@ -33,10 +33,8 @@ type Project struct {
 }
 
 type Linear struct {
-	ClientID     string `yaml:"client_id" secret:"true" default:"${LINEAR_CLIENT_ID}"`
-	ClientSecret string `yaml:"client_secret" secret:"true" default:"${LINEAR_CLIENT_SECRET}"`
-	Team         string `yaml:"team"`
-	States       States `yaml:"states"`
+	Team   string `yaml:"team"`
+	States States `yaml:"states"`
 }
 
 // States maps Gosha's states to the team's state names (DESIGN §3).
@@ -48,7 +46,6 @@ type States struct {
 }
 
 type Notion struct {
-	Token    string `yaml:"token" secret:"true" default:"${NOTION_TOKEN}"`
 	RootPage string `yaml:"root_page"`
 }
 
@@ -87,13 +84,13 @@ var SampleTicket = tmpl.Ticket{ID: "NXT-12", Team: "NXT", Number: 12, Title: "Ad
 
 // ParseProject decodes and validates a project config read from commit.
 // It returns warnings that don't stop the project.
-func ParseProject(data []byte, commit string, s *Secrets) (*Project, []string, error) {
+func ParseProject(data []byte, commit string) (*Project, []string, error) {
 	file := ProjectFile
 	if commit != "" {
 		file = fmt.Sprintf("%s@%.7s", ProjectFile, commit)
 	}
 	p := &Project{}
-	if err := decode(file, data, s, p); err != nil {
+	if err := decode(file, data, p); err != nil {
 		return nil, nil, err
 	}
 	p.Commit = commit

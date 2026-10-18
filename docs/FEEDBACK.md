@@ -129,14 +129,6 @@ Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejec
 
 **Change:** closing the PR on GitHub already means restart (a PR closed unmerged starts fresh). Drop the command and its filtering.
 
-## 12. No secrets in repo config
-
-**Status:** agreed
-
-**Today (§5.4):** the repo config refers to secrets as `${VAR}`, with 3-layer resolution, defaults for omitted fields, literal-secret rejection and a `$${` escape.
-
-**Change:** secrets are read by fixed key names from `secrets.env`, with `projects/<name>/secrets.env` overriding. The repo config has no secret fields, so most of §5.4 goes away.
-
 ## 13. Config snapshot per pickup
 
 **Status:** rejected

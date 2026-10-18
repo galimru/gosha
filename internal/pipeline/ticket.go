@@ -553,7 +553,7 @@ func (t *ticket) spec(prompt, dir string, rp runPaths) agent.Spec {
 	return agent.Spec{
 		Binary: t.e.ClaudeBinary, Prompt: prompt, Dir: dir, SettingsFile: rp.settings, Transcript: rp.transcript,
 		Mode: cfg.PermissionMode, Model: cfg.Model,
-		OAuthToken: t.e.Global.Claude.OAuthToken, ConfigDir: t.e.Home.Project(t.p.Name).Claude(), TmpDir: rp.agent.RunDir,
+		OAuthToken: t.p.Creds.ClaudeToken, ConfigDir: t.e.Home.Project(t.p.Name).Claude(), TmpDir: rp.agent.RunDir,
 		Git: t.bot, Redact: t.e.Redactor.Redact, AddDirs: nonEmpty(t.kb.Dir),
 	}
 }

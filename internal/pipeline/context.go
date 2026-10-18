@@ -25,9 +25,9 @@ func (e *Env) Mirror(p *Project) (*notion.Mirror, error) {
 	}
 	var api notion.API
 	if e.Notion != nil {
-		api = e.Notion(p.Config.Notion.Token)
+		api = e.Notion(p.Creds.NotionToken)
 	} else {
-		api = notion.New(p.Config.Notion.Token)
+		api = notion.New(p.Creds.NotionToken)
 	}
 	return &notion.Mirror{Dir: e.Home.Project(p.Name).Context(), Root: root, API: api}, nil
 }

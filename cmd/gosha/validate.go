@@ -77,7 +77,7 @@ func (a *app) validateProject(cmd *cobra.Command, env *pipeline.Env, name string
 		lin.States.Ready.Name, lin.States.InProgress.Name, lin.States.InReview.Name, lin.States.Blocked.Name)
 	branch, _ := p.Config.BranchName(config.SampleTicket)
 	fmt.Fprintf(w, "✓ %s: branch pattern → %s\n", name, branch)
-	nc := notion.New(p.Config.Notion.Token)
+	nc := notion.New(p.Creds.NotionToken)
 	bot, err := nc.Me(ctx)
 	if err != nil {
 		return fmt.Errorf("notion: %w", err)

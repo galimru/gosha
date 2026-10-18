@@ -155,11 +155,7 @@ github_app:                    # one app, installed on every project repo
   app_id: 123456
   private_key_file: github-app.pem   # relative to ~/.gosha; chmod 600
 
-claude:
-  oauth_token: ${CLAUDE_CODE_OAUTH_TOKEN}   # from `claude setup-token` (subscription)
-
 telegram:
-  bot_token: ${TELEGRAM_BOT_TOKEN}
   chat_id: -1001234567890      # private channel; the bot is an admin with "Post messages"
   digest_at: "09:00"           # daily digest, local time; empty disables it
 ```
@@ -170,14 +166,14 @@ telegram:
 
 The project name comes from the repo's config.
 
-Secrets are referenced with `${VAR}` (§5.4).
+Secrets aren't in any config file; they're read from `secrets.env` by fixed key names (§5.4).
 
 ### 5.2 Per project: `<repo>/.gosha/config.yaml`
 
 **Read from the default branch, never from a checkout.** There's no local copy. On every poll, Gosha runs `git fetch origin` in the project's bare clone, then reads the file with `git show origin/<default>:.gosha/config.yaml`; prompt templates are read the same way. (A bare clone has no `origin/*` refs by default, so `gosha add` sets `remote.origin.fetch` to `+refs/heads/*:refs/remotes/origin/*`.) Agents therefore can't change their own rules, and a config change takes effect on the next poll after it reaches the default branch, with no restart.
 
 **Invalid or missing config: fail closed.** Gosha never keeps running a project on an outdated config.
-- **Invalid config** (bad YAML, failed validation, a missing secret variable): the project goes **paused**. No new tickets are picked up. The config is read once at the start of each pass, and a pass uses it to the end. A run that continues in a later pass (usage limit, restart, Blocked → Ready) uses the config on the default branch at that time; if that config is invalid, the run waits, still In Progress, until it's fixed.
+- **Invalid config** (bad YAML, failed validation, a missing secret key): the project goes **paused**. No new tickets are picked up. The config is read once at the start of each pass, and a pass uses it to the end. A run that continues in a later pass (usage limit, restart, Blocked → Ready) uses the config on the default branch at that time; if that config is invalid, the run waits, still In Progress, until it's fixed.
 - **Telegram** gets one message naming the commit and the error, and another when the project recovers. `gosha status` shows the reason.
 - **Recovery:** as soon as a valid config lands on the default branch (and the Linear and Notion checks pass too), the project resumes, including any paused ticket.
 - **`.gosha/config.yaml` removed from the default branch:** treated the same way, the project is paused.
@@ -187,8 +183,6 @@ Secrets are referenced with `${VAR}` (§5.4).
 name: nextdesk
 
 linear:
-  client_id: ${LINEAR_CLIENT_ID}           # Gosha's OAuth app (§8.6); default if omitted
-  client_secret: ${LINEAR_CLIENT_SECRET}   # default if omitted
   team: NXT                    # team key
   states:                      # optional; defaults shown, override any subset
     ready: Ready
@@ -197,7 +191,6 @@ linear:
     blocked: Blocked
 
 notion:
-  token: ${NOTION_TOKEN}       # default if omitted
   root_page: https://www.notion.so/NextDesk-<id>
 
 github:
@@ -263,14 +256,16 @@ Functions:
 - `lower` / `upper`
 - `trunc N`
 
-### 5.4 Secrets & variables
+### 5.4 Secrets
 
-Config files never contain secret values. They refer to variables with `${VAR}`, the same syntax as the shell and docker-compose. That keeps a reference to a secret visibly different from ordinary text.
+Config files never contain secrets, not even references to them. Gosha reads each secret by a fixed key name:
 
-```yaml
-linear:
-  client_secret: ${LINEAR_CLIENT_SECRET}
-```
+| Key | Used for |
+|---|---|
+| `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET` | Gosha's Linear OAuth app (§8.6) |
+| `NOTION_TOKEN` | the Notion integration (§6.3) |
+| `CLAUDE_CODE_OAUTH_TOKEN` | agents, from `claude setup-token` (§7) |
+| `TELEGRAM_BOT_TOKEN` | the Telegram feed (§9) |
 
 - **Where values come from** (first match wins):
   1. `~/.gosha/projects/<project>/secrets.env` (optional per-project overrides, e.g. a project in a different Notion workspace)
@@ -278,16 +273,7 @@ linear:
   3. the process environment
 
   The files are `KEY=value` lines with `600` permissions, and they live only on the host. A secrets file (or the GitHub App key) that group or others can read is refused, the same fail-closed way as an invalid config.
-- **Shared keys:**
-  - `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`
-  - `NOTION_TOKEN`
-  - `TELEGRAM_BOT_TOKEN`
-  - `CLAUDE_CODE_OAUTH_TOKEN`
-- **Only braced `${VAR}` is recognised.** A bare `$` is left alone (prompts and regexes contain them), and `$${` escapes a literal `${`.
-- **Substituted after YAML parsing,** into string values only. A secret containing `:` or `#` can't break the file's structure.
-- **Missing variables are errors:** an unset or empty variable fails `gosha validate` and stops that project, naming the file and field. It never silently becomes an empty string.
-- **Defaults:** an omitted secret field defaults to its shared key (e.g. `linear.client_secret` → `${LINEAR_CLIENT_SECRET}`, `claude.oauth_token` → `${CLAUDE_CODE_OAUTH_TOKEN}`, `telegram.bot_token` → `${TELEGRAM_BOT_TOKEN}`).
-- **Literal secrets are rejected:** secret fields (`client_secret`, `token`, `bot_token`, `oauth_token`) must use `${VAR}`. A literal value fails validation, so a token can't be committed by accident.
+- **Missing keys are errors:** a project whose Linear, Notion or Claude key is unset or empty is paused (§5.2), naming the key. It never silently becomes an empty string.
 - **Redaction:** resolved secret values are scrubbed from logs, Telegram messages and agent transcripts.
 
 ## 6. Project context (Notion mirror)
@@ -643,7 +629,7 @@ Everything lives in **one directory**, `~/.gosha` of the running user. `--home` 
             └── <n>-setup.log                # agent.setup output
 ```
 
-The project's config is **not** in this tree; it's read from the repo (§5.2). `gosha config show <project>` prints the effective config (repo file + defaults, secrets shown as `***`).
+The project's config is **not** in this tree; it's read from the repo (§5.2). `gosha config show <project>` prints the effective config (repo file + defaults).
 
 ### 11.4 Service
 - `gosha daemon` runs in the foreground and logs to a file and stderr. Any service manager can run it.
@@ -690,7 +676,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 
 - `gosha init`: run in a local checkout; writes a starter `.gosha/config.yaml` + default prompts to commit
 - `gosha add <repo-url>` / `remove` / `list`
-- `gosha config show <project>`: effective config, secrets masked
+- `gosha config show <project>`: effective config
 - `gosha auth linear`: checks Gosha's Linear app credentials and shows the actor it acts as (§8.6)
 - `gosha auth status`: checks every identity and shows who Gosha acts as: GitHub App + installations, Linear actor, Notion bot + shared root pages, Telegram bot + channel, Claude token
 - `gosha validate [project]`: config, credentials, Linear states, Notion access
@@ -739,7 +725,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - Module path: `github.com/galimru/gosha`.
 - One template data model (`.Ticket.*`, `.Context.*`, …) shared by prompts and the branch pattern. The default branch is `gosha/{{.Ticket.ID}}-{{.Ticket.Title | slug}}`. Any pattern is allowed: names are only used when a branch is created, and branches are tracked through `gosha.db`.
 - GitHub through its API from Go (go-github); git through the `git` CLI; no `gh` dependency.
-- Secrets are referenced as `${VAR}`. Values are resolved from `projects/<project>/secrets.env`, then `secrets.env`, then the environment. Literal secrets are rejected.
+- Secrets are read by fixed key names from `projects/<project>/secrets.env`, then `secrets.env`, then the environment. Config files hold no secrets and no references to them. (M7)
 - All project config lives in the repo's `.gosha/`. The global config is machine-level only; projects are discovered from `~/.gosha/projects/`.
 - A single home directory `~/.gosha`, with a `projects/<name>/` folder per project.
 - Project config is read from `origin/<default>` in a bare clone, with no local copy. An invalid or missing config pauses the project (fail closed).

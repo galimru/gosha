@@ -58,6 +58,7 @@ func (e *Env) review(ctx context.Context, s agent.Spec, resultFile string) (*age
 type Project struct {
 	Name     string
 	Config   *config.Project
+	Creds    config.Credentials
 	Warnings []string
 	Repo     *gitx.Repo
 	GitHub   gitx.GitHubRepo
@@ -123,6 +124,13 @@ func (e *Env) readConfig(ctx context.Context, p *Project) error {
 	if err != nil {
 		return e.pause(ctx, p, err)
 	}
+	secrets, err := config.LoadSecrets(e.Home, p.Name, e.Redactor)
+	if err != nil {
+		return e.pause(ctx, p, err)
+	}
+	if p.Creds, err = secrets.ProjectCredentials(); err != nil {
+		return e.pause(ctx, p, err)
+	}
 	if wf := cfg.Deploy.Workflow; wf != "" {
 		if _, err := p.Repo.Show(ctx, p.Commit, ".github/workflows/"+wf); errors.Is(err, gitx.ErrNotFound) {
 			warns = append(warns, fmt.Sprintf("deploy.workflow: .github/workflows/%s isn't on the default branch, so no deploy will be found", wf))
@@ -145,11 +153,7 @@ func (e *Env) parseConfig(ctx context.Context, p *Project) (*config.Project, []s
 	if err != nil {
 		return nil, nil, err
 	}
-	secrets, err := config.LoadSecrets(e.Home, p.Name, e.Redactor)
-	if err != nil {
-		return nil, nil, err
-	}
-	cfg, warns, err := config.ParseProject(data, p.Commit, secrets)
+	cfg, warns, err := config.ParseProject(data, p.Commit)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -169,7 +173,7 @@ type Linear struct {
 // ConnectLinear checks the project's team and states. A missing team or
 // state pauses the project, since Gosha can't run it (DESIGN §3).
 func (e *Env) ConnectLinear(ctx context.Context, p *Project) (*Linear, error) {
-	c := linear.New(p.Config.Linear.ClientID, p.Config.Linear.ClientSecret)
+	c := linear.New(p.Creds.LinearClientID, p.Creds.LinearClientSecret)
 	team, err := c.Team(ctx, p.Config.Linear.Team)
 	if errors.Is(err, linear.ErrTeamNotFound) {
 		return nil, e.pause(ctx, p, err)

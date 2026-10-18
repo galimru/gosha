@@ -281,8 +281,7 @@ func newHarness(t *testing.T, cfg string) *harness {
 	}
 	t.Cleanup(func() { st.Close() })
 	commit, _ := repo.RevParse(ctx, "origin/main")
-	pc, _, err := config.ParseProject([]byte(cfg), commit, config.NewSecrets(nil, nil, map[string]string{
-		"LINEAR_CLIENT_ID": "a", "LINEAR_CLIENT_SECRET": "b", "NOTION_TOKEN": "c"}))
+	pc, _, err := config.ParseProject([]byte(cfg), commit)
 	if err != nil {
 		t.Fatal(err)
 	}
