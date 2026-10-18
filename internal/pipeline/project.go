@@ -36,9 +36,40 @@ type Env struct {
 	// Notion makes the Notion client for a token: notion.New unless
 	// replaced in tests.
 	Notion func(token string) notion.API
+	// Limit pauses every agent pass while Claude's usage limit lasts; nil
+	// never pauses.
+	Limit *UsageLimit
 
 	botMu sync.Mutex
 	bot   *agent.Identity
+
+	slotsOnce sync.Once
+	slots     chan struct{}
+
+	// ready is each project's Ready count from its last poll.
+	readyMu sync.Mutex
+	ready   map[string]int
+}
+
+// acquireSlot waits out a usage limit, then for one of the concurrency
+// agent slots shared by every project in the process.
+func (e *Env) acquireSlot(ctx context.Context) (release func(), err error) {
+	if err := e.Limit.Wait(ctx); err != nil {
+		return nil, err
+	}
+	e.slotsOnce.Do(func() {
+		n := 1
+		if e.Global != nil && e.Global.Concurrency > 0 {
+			n = e.Global.Concurrency
+		}
+		e.slots = make(chan struct{}, n)
+	})
+	select {
+	case e.slots <- struct{}{}:
+		return func() { <-e.slots }, nil
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	}
 }
 
 func (e *Env) implement(ctx context.Context, s agent.Spec, resultFile string) (*agent.ImplementerResult, *agent.Outcome, error) {
@@ -75,7 +106,7 @@ type Project struct {
 }
 
 // PausedError means the project is paused because of its config: no
-// pickups until a valid config lands on the default branch (DESIGN §5.2).
+// pickups until a valid config lands on the default branch.
 type PausedError struct {
 	Project string
 	Commit  string
@@ -171,7 +202,7 @@ type Linear struct {
 }
 
 // ConnectLinear checks the project's team and states. A missing team or
-// state pauses the project, since Gosha can't run it (DESIGN §3).
+// state pauses the project, since Gosha can't run it.
 func (e *Env) ConnectLinear(ctx context.Context, p *Project) (*Linear, error) {
 	c := linear.New(p.Creds.LinearClientID, p.Creds.LinearClientSecret)
 	team, err := c.Team(ctx, p.Config.Linear.Team)
@@ -193,7 +224,7 @@ func (e *Env) pause(ctx context.Context, p *Project, cause error) error {
 }
 
 // pauseNotion pauses the project over Notion access. Only a pickup's
-// context refresh can clear it (DESIGN §6.2).
+// context refresh can clear it.
 func (e *Env) pauseNotion(ctx context.Context, p *Project, cause error) error {
 	return e.setPaused(ctx, p, cause, true)
 }

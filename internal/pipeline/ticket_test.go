@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,6 +30,17 @@ type fakeLinear struct {
 	// ticket is the ticket's comments as Linear has them; pickup sets it,
 	// and a test can add to it while Gosha works.
 	ticket []linear.Comment
+	// moved is a state a human moved the ticket to; until set, the ticket
+	// reads as In Progress.
+	moved atomic.Pointer[linear.State]
+}
+
+func (f *fakeLinear) Issue(_ context.Context, id string) (*linear.Issue, error) {
+	st := states.InProgress
+	if m := f.moved.Load(); m != nil {
+		st = *m
+	}
+	return &linear.Issue{ID: id, State: st}, nil
 }
 
 func (f *fakeLinear) Comments(context.Context, string) ([]linear.Comment, error) {
@@ -173,6 +185,11 @@ func (f *fakePRs) CreateComment(_ context.Context, _ int, body string) error {
 
 func (f *fakePRs) Token(context.Context) (string, error) { return "", nil }
 
+func (f *fakePRs) ClosePR(_ context.Context, n int) error {
+	f.prs[n].State = "closed"
+	return nil
+}
+
 func (f *fakePRs) PR(_ context.Context, n int) (*github.PR, error) {
 	if p, ok := f.prs[n]; ok {
 		return p, nil
@@ -287,7 +304,7 @@ func newHarness(t *testing.T, cfg string) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "gosha.db"))
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "gosha.db"), "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +344,7 @@ func (h *harness) pickup(comments ...linear.Comment) error {
 	ctx, cancel := context.WithCancel(h.ctx)
 	defer cancel()
 	h.prs.stop, h.prs.stopped = cancel, false
-	err = h.env.handle(ctx, h.p, states, h.lin, h.prs, agent.Identity{Name: "goshabot[bot]", Email: "1+goshabot[bot]@users.noreply.github.com"}, h.kb, c)
+	err = h.env.handle(ctx, h.p, states, h.lin, h.prs, agent.Identity{Name: "goshabot[bot]", Email: "1+goshabot[bot]@users.noreply.github.com"}, h.kb, c, nil)
 	if h.prs.stopped && errors.Is(err, context.Canceled) {
 		return nil
 	}

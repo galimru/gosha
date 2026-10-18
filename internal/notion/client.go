@@ -1,5 +1,5 @@
 // Package notion mirrors a Notion page tree into a markdown file tree for
-// agents to read (DESIGN §6). Gosha only reads from Notion.
+// agents to read. Gosha only reads from Notion.
 package notion
 
 import (

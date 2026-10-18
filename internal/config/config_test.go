@@ -155,19 +155,23 @@ func TestGlobal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g.Concurrency != 1 || !g.Agent.SandboxEnabled() || g.Telegram.Digest() != "09:00" {
+	if g.Concurrency != 1 || !g.Agent.SandboxEnabled() || g.Telegram.Digest() != "09:00" || g.Retention != 30*24*time.Hour {
 		t.Errorf("defaults: %+v", g)
 	}
 	if g.GitHubApp.PrivateKeyFile != h.Path("github-app.pem") {
 		t.Errorf("key path = %q", g.GitHubApp.PrivateKeyFile)
 	}
 
-	g, err = ParseGlobal(h, "config.yaml", []byte("github_app:\n  app_id: 42\ntelegram:\n  chat_id: -100\n  digest_at: \"\"\nagent:\n  sandbox: false\n"))
+	g, err = ParseGlobal(h, "config.yaml", []byte("github_app:\n  app_id: 42\ntelegram:\n  chat_id: -100\n  digest_at: \"\"\nagent:\n  sandbox: false\nretention: 36h\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g.Telegram.Digest() != "" || g.Agent.SandboxEnabled() {
+	if g.Telegram.Digest() != "" || g.Agent.SandboxEnabled() || g.Retention != 36*time.Hour {
 		t.Errorf("explicit values ignored: %+v", g)
+	}
+
+	if _, err := ParseGlobal(h, "config.yaml", []byte("github_app:\n  app_id: 42\ntelegram:\n  chat_id: -100\nretention: 2w\n")); err == nil || !strings.Contains(err.Error(), "retention") {
+		t.Errorf("bad retention: %v", err)
 	}
 
 	os.Chmod(h.Path("github-app.pem"), 0o644)

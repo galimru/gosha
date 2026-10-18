@@ -1,4 +1,4 @@
-// Package pipeline is the per-ticket pipeline (DESIGN §8): it takes a
+// Package pipeline is the per-ticket pipeline: it takes a
 // ticket from Ready to merged, deployed and reported In Review.
 package pipeline
 
@@ -23,7 +23,7 @@ const (
 	Skipped Action = "skipped"
 )
 
-// Modes (DESIGN §8.1).
+// Modes.
 const (
 	ModeFresh   = "fresh"
 	ModeRestart = "fresh (restart)"
@@ -52,9 +52,9 @@ type Decision struct {
 	Branch string
 }
 
-// Plan orders Ready tickets and decides which one an idle project picks up
-// (DESIGN §8.1): tickets with unfinished blockers are skipped, the rest are
-// ordered by priority (Urgent first, None last) and then by age.
+// Plan orders Ready tickets and decides which one an idle project picks up:
+// tickets with unfinished blockers are skipped, the rest are ordered
+// by priority (Urgent first, None last) and then by age.
 func Plan(p *config.Project, st *linear.States, cands []Candidate) []Decision {
 	sorted := slices.Clone(cands)
 	slices.SortStableFunc(sorted, func(a, b Candidate) int {
@@ -120,7 +120,7 @@ func mode(p *config.Project, c Candidate) (mode, branch string) {
 	return m, branchName(c.Issue)
 }
 
-// branchName is the ticket's branch, before any -2, -3 suffix (DESIGN §8.2).
+// branchName is the ticket's branch, before any -2, -3 suffix.
 func branchName(is linear.Issue) string {
 	name := "gosha/" + is.Identifier
 	if s := tmpl.Slug(is.Title, tmpl.SlugMax); s != "" {

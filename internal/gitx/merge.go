@@ -17,7 +17,7 @@ func (r *Repo) IsAncestor(ctx context.Context, a, b string) (bool, error) {
 }
 
 // TakeOrigin points the bare clone's branch at origin's, after GitHub
-// changed it (merging the base in, DESIGN §8.5) and it was fetched.
+// changed it (merging the base in) and it was fetched.
 func (r *Repo) TakeOrigin(ctx context.Context, branch string) error {
 	_, err := r.git(ctx, "", "update-ref", "refs/heads/"+branch, "refs/remotes/origin/"+branch)
 	return err

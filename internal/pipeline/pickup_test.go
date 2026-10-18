@@ -67,7 +67,7 @@ func TestPlanBlockers(t *testing.T) {
 	if ds[1].Action != Pickup {
 		t.Errorf("NXT-2 blockers are In Review/Done, should be picked: %+v", ds[1])
 	}
-	// DESIGN §8.1: only In Review or Done satisfy a blocker, so Canceled doesn't.
+	// Only In Review or Done satisfy a blocker, so Canceled doesn't.
 	if ds[2].Action != Skipped || ds[2].Reason != "blocked by NXT-6 (Canceled), NXT-5 (Ready)" {
 		t.Errorf("NXT-3: %+v", ds[2])
 	}

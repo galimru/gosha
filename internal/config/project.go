@@ -9,7 +9,7 @@ import (
 	"github.com/galimru/gosha/internal/notion"
 )
 
-// ProjectFile is where a project's config lives in its repo (DESIGN §5.2).
+// ProjectFile is where a project's config lives in its repo.
 const ProjectFile = ".gosha/config.yaml"
 
 var projectName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
@@ -34,7 +34,7 @@ type Linear struct {
 	States States `yaml:"states"`
 }
 
-// States maps Gosha's states to the team's state names (DESIGN §3).
+// States maps Gosha's states to the team's state names.
 type States struct {
 	Ready      string `yaml:"ready" default:"Ready"`
 	InProgress string `yaml:"in_progress" default:"In Progress"`

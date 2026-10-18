@@ -12,7 +12,7 @@ import (
 )
 
 // ErrWorkflowPermission means GitHub refused a push because it changes
-// .github/workflows/ and the App has no Workflows permission (DESIGN §8.6).
+// .github/workflows/ and the App has no Workflows permission.
 var ErrWorkflowPermission = errors.New("the push changes .github/workflows/, which the Gosha GitHub App is not allowed to do")
 
 // ErrNotCheckout means a ticket checkout's .git isn't a plain directory.
@@ -43,7 +43,7 @@ func (r *Repo) LocalBranchExists(ctx context.Context, branch string) (bool, erro
 
 // CloneCheckout makes dir a self-contained checkout of branch for an agent.
 // It isn't a linked worktree: the agent can write to everything in dir, so
-// nothing in it may be shared with the bare clone (DESIGN §8.2). The branch
+// nothing in it may be shared with the bare clone. The branch
 // starts from the bare clone's refs/heads/<branch> if Gosha already has work
 // on it, otherwise from origin/<base>. An existing dir is reused as it is.
 func (r *Repo) CloneCheckout(ctx context.Context, dir, base, branch string) (fresh bool, err error) {

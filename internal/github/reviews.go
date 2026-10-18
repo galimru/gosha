@@ -18,8 +18,8 @@ type ReviewComment struct {
 	Body string
 }
 
-// CreateReview posts a COMMENT review on sha (DESIGN §8.6: an App can't
-// approve its own PR). Comments on lines GitHub can't anchor (outside the
+// CreateReview posts a COMMENT review on sha, since an App can't
+// approve its own PR. Comments on lines GitHub can't anchor (outside the
 // diff, or on a whole file) go into the body instead, so one bad line
 // number doesn't fail the whole review.
 func (i *Installation) CreateReview(ctx context.Context, number int, sha, body string, comments []ReviewComment) (int64, error) {

@@ -13,9 +13,9 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
 
+	"github.com/galimru/gosha/internal/flock"
 	"github.com/galimru/gosha/internal/tmpl"
 )
 
@@ -104,18 +104,7 @@ func (m *Mirror) now() time.Time {
 // lock takes the mirror's exclusive lock, so a refresh and a freeze (from
 // the pipeline or the CLI) never interleave.
 func (m *Mirror) lock() (unlock func(), err error) {
-	if err := os.MkdirAll(filepath.Dir(m.Dir), 0o700); err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(m.Dir+".lock", os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		f.Close()
-		return nil, err
-	}
-	return func() { f.Close() }, nil
+	return flock.Lock(m.Dir + ".lock")
 }
 
 func (m *Mirror) load() (*manifest, error) {
@@ -153,8 +142,7 @@ func (m *Mirror) Info() (Info, error) {
 // blocks), so a page Search doesn't list yet is still found. When only
 // page content changed, only those pages are fetched again. When the tree
 // changed (a page added, renamed, moved or removed), every page is
-// fetched again, so links between pages are resolved from fresh content
-// (DESIGN §6.2).
+// fetched again, so links between pages are resolved from fresh content.
 func (m *Mirror) Refresh(ctx context.Context) (Stats, error) {
 	unlock, err := m.lock()
 	if err != nil {
@@ -319,7 +307,7 @@ func (m *Mirror) blocks(ctx context.Context, id string) ([]Block, error) {
 	return bs, nil
 }
 
-// layout assigns every page its path (DESIGN §6.1): the root is
+// layout assigns every page its path: the root is
 // README.md, a page with child pages is a directory with its own content
 // in README.md, any other page is <slug>.md.
 func layout(man *manifest) {

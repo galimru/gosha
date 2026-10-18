@@ -1,5 +1,5 @@
 // Package linear talks to Linear's GraphQL API as Gosha's OAuth app, using
-// client_credentials tokens (DESIGN §8.6).
+// client_credentials tokens.
 package linear
 
 import (
@@ -225,7 +225,7 @@ func (c *Client) Viewer(ctx context.Context) (*Viewer, error) {
 	return &out.Viewer, nil
 }
 
-// State types used by Linear (DESIGN §3).
+// State types used by Linear.
 const (
 	TypeBacklog   = "backlog"
 	TypeUnstarted = "unstarted"

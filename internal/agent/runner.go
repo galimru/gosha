@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// Permission modes: dontAsk in the sandbox, auto without it (DESIGN §7.1).
+// Permission modes: dontAsk in the sandbox, auto without it.
 const (
 	ModeDontAsk = "dontask"
 	ModeAuto    = "auto"
@@ -41,7 +41,7 @@ type Spec struct {
 	// Resume continues an earlier session.
 	Resume string
 	// DisallowedTools are removed from the agent, whatever the permission
-	// mode: the reviewer can't edit (DESIGN §7.1).
+	// mode: the reviewer can't edit.
 	DisallowedTools []string
 	// AddDirs are extra directories the agent may use beyond Dir: the
 	// run's frozen project context (read-only through the settings).
@@ -81,7 +81,7 @@ func (s Spec) args() []string {
 }
 
 // env is the agent's whole environment: no Gosha secrets, no
-// ANTHROPIC_API_KEY, no GitHub or Linear tokens (DESIGN §7.1).
+// ANTHROPIC_API_KEY, no GitHub or Linear tokens.
 func (s Spec) env() []string {
 	env := []string{
 		"PATH=" + os.Getenv("PATH"),
@@ -111,7 +111,7 @@ type Outcome struct {
 	Duration time.Duration
 }
 
-// LimitError means Claude's usage limit stopped the run (DESIGN §8.11).
+// LimitError means Claude's usage limit stopped the run.
 type LimitError struct {
 	Status   string
 	ResetsAt time.Time
@@ -140,7 +140,8 @@ type event struct {
 }
 
 // limited reports a rate-limit status that blocks requests. Only "allowed"
-// was observed in M0; the warning variant still lets requests through.
+// has been observed in practice; the warning variant still lets requests
+// through.
 func limited(status string) bool {
 	return status != "" && status != "allowed" && status != "allowed_warning"
 }

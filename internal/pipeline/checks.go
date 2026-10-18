@@ -15,7 +15,7 @@ import (
 )
 
 // How often checks are polled, and how long Gosha waits after they all
-// finish for late-starting ones (DESIGN §8.4). Variables for tests.
+// finish for late-starting ones. Variables for tests.
 var (
 	checkPoll   = 15 * time.Second
 	checkSettle = 30 * time.Second
@@ -35,7 +35,7 @@ type checkResult struct {
 func (c checkResult) ok() bool { return len(c.failed)+len(c.missing)+len(c.pending) == 0 }
 
 // checks waits for CI on the branch head and merges once it's green, or
-// gives the failures to the implementer (DESIGN §8.4).
+// gives the failures to the implementer.
 func (t *ticket) checks(ctx context.Context) error {
 	if err := t.save(ctx, StepChecks); err != nil {
 		return err
@@ -118,7 +118,7 @@ func (t *ticket) savedFailure(ctx context.Context) (*tmpl.Feedback, error) {
 }
 
 // waitChecks polls head's checks until all have finished, start_grace or
-// checks.timeout runs out, or ctx ends (DESIGN §8.4). With checks.required
+// checks.timeout runs out, or ctx ends. With checks.required
 // set, those must all appear; without it, whatever appears within
 // start_grace must pass, and nothing appearing is a pass.
 func (t *ticket) waitChecks(ctx context.Context, head string) (checkResult, error) {
@@ -242,8 +242,7 @@ func codeList(names []string) string {
 }
 
 // fix runs the implementer on failed checks or merge conflicts, one check
-// round, then sends its change back through review and checks (DESIGN
-// §8.4, §8.5).
+// round, then sends its change back through review and checks.
 func (t *ticket) fix(ctx context.Context, fb tmpl.Feedback) error {
 	if err := t.save(ctx, StepFix); err != nil {
 		return err

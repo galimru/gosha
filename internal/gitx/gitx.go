@@ -1,5 +1,5 @@
 // Package gitx runs the git CLI for Gosha's bare clones. Gosha's own token is
-// injected per command and never stored (DESIGN §8.6), and the user's git
+// injected per command and never stored, and the user's git
 // config never applies.
 package gitx
 

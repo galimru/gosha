@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // stepNames are the steps in plain words, for the Blocked comment.
@@ -27,7 +28,7 @@ const needAnswer = "answer in a comment, then move the ticket back to Ready and 
 	"To start over from scratch, close the pull request instead."
 
 // block posts the Blocked comment, moves the ticket to Blocked and keeps
-// the branch, PR and checkout so a later Ready resumes (DESIGN §8.9).
+// the branch, PR and checkout so a later Ready resumes.
 func (t *ticket) block(ctx context.Context, reason string, questions []string) error {
 	return t.blockWith(ctx, reason, questions, needAnswer)
 }
@@ -61,10 +62,11 @@ func (t *ticket) blockWith(ctx context.Context, reason string, questions []strin
 	if _, err := t.issues.CreateComment(ctx, t.issue.ID, b.String()); err != nil {
 		return err
 	}
+	t.leave()
 	if err := t.issues.Transition(ctx, t.issue.ID, t.states.Blocked.ID); err != nil {
 		return err
 	}
-	t.run.BlockedReason = reason
+	t.run.BlockedReason, t.run.BlockedAt = reason, time.Now()
 	if err := t.save(ctx, StepBlocked); err != nil {
 		return err
 	}

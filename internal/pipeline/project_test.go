@@ -81,7 +81,7 @@ func TestReadConfigFailClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "gosha.db"))
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "gosha.db"), "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestReadConfigFailClosed(t *testing.T) {
 
 func TestPauseReasonRedacted(t *testing.T) {
 	ctx := context.Background()
-	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "gosha.db"))
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "gosha.db"), "test")
 	if err != nil {
 		t.Fatal(err)
 	}

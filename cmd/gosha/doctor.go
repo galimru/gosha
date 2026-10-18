@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 
 	"github.com/galimru/gosha/internal/config"
@@ -107,6 +108,14 @@ func (a *app) doctor(ctx context.Context, projects []string) []check {
 		return cs
 	}
 	add("ok", "global config %s (concurrency %d)", a.home.Config(), g.Concurrency)
+	ws, _ := pipeline.DirSize(a.home.WorkspacesDir())
+	var runs int64
+	for _, n := range names {
+		r, _ := pipeline.DirSize(a.home.Project(n).Runs())
+		runs += r
+	}
+	add("ok", "disk: workspaces/ %s, projects/*/runs/ %s (kept for %s; `gosha prune` frees it now)",
+		humanize.IBytes(uint64(ws)), humanize.IBytes(uint64(runs)), g.RetentionText)
 	if !g.Agent.SandboxEnabled() {
 		add("warn", "agent.sandbox is false: agents run in auto mode without the sandbox and can read Gosha's secrets; a separate OS user (--user) is the remaining protection")
 	}

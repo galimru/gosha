@@ -11,7 +11,7 @@ import (
 	"github.com/galimru/gosha/internal/tmpl"
 )
 
-// merge merges the PR at the head the checks passed on (DESIGN §8.5). A
+// merge merges the PR at the head the checks passed on. A
 // base that moved is merged into the branch, which then needs checks
 // again.
 func (t *ticket) merge(ctx context.Context) error {
@@ -51,7 +51,7 @@ func (t *ticket) merge(ctx context.Context) error {
 	return t.afterMerge(ctx)
 }
 
-// syncBase has GitHub merge the moved base into the branch (DESIGN §8.5).
+// syncBase has GitHub merge the moved base into the branch.
 // A clean merge is fetched and checked again; conflicts go to the
 // implementer as a check round.
 func (t *ticket) syncBase(ctx context.Context) error {

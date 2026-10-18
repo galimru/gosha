@@ -12,7 +12,7 @@ import (
 // out of every message.
 const minSecretLen = 6
 
-// Redactor scrubs resolved secret values from text (DESIGN §5.4).
+// Redactor scrubs resolved secret values from text.
 // The zero value is not usable; a nil *Redactor redacts nothing.
 type Redactor struct {
 	mu     sync.RWMutex

@@ -3,15 +3,18 @@ package store
 import (
 	"context"
 	"database/sql"
+	"io/fs"
 	"path/filepath"
+	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 )
 
 func open(t *testing.T) (*Store, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "gosha.db")
-	s, err := Open(context.Background(), path)
+	s, err := Open(context.Background(), path, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +25,7 @@ func open(t *testing.T) (*Store, string) {
 func TestMigrateTwice(t *testing.T) {
 	s, path := open(t)
 	s.Close()
-	s2, err := Open(context.Background(), path)
+	s2, err := Open(context.Background(), path, "test")
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -161,31 +164,48 @@ func TestChecksFields(t *testing.T) {
 	}
 }
 
-func TestMigrateFromM2(t *testing.T) {
+func TestMigrateBackupAndVersion(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "gosha.db")
-	db, err := sql.Open("sqlite", "file:"+path)
+	s, err := Open(ctx, path, "v0.1.0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"migrations/001_init.sql", "migrations/002_m2.sql"} {
-		body, _ := migrations.ReadFile(name)
-		if _, err := db.Exec(string(body)); err != nil {
-			t.Fatal(err)
-		}
+	if err := s.CreateRun(ctx, &Run{Project: "p", TicketID: "NXT-1", Mode: "fresh"}); err != nil {
+		t.Fatal(err)
 	}
-	db.Exec("PRAGMA user_version = 2")
-	db.Exec(`INSERT INTO runs (project, ticket_id, mode, step, created_at, updated_at) VALUES ('p', 'NXT-1', 'fresh', 'review', '', '')`)
-	db.Close()
+	s.Close()
 
-	s, err := Open(ctx, path)
+	// A later release adds a migration: the old database is backed up first.
+	base, _ := fs.ReadFile(embedded, "migrations/001_init.sql")
+	defer func(m fs.FS) { migrations = m }(migrations)
+	migrations = fstest.MapFS{
+		"migrations/001_init.sql": {Data: base},
+		"migrations/002_next.sql": {Data: []byte("ALTER TABLE runs ADD COLUMN extra TEXT NOT NULL DEFAULT '';")},
+	}
+	s, err = Open(ctx, path, "v0.2.0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
-	got, err := s.OpenRun(ctx, "p", "NXT-1")
-	if err != nil || got == nil || got.Step != "review" || got.ReviewID != 0 {
-		t.Fatalf("migrated run = %+v, %v", got, err)
+	if v, _ := s.Meta(ctx, metaVersion); v != "v0.2.0" {
+		t.Errorf("gosha_version = %q", v)
+	}
+	s.Close()
+	bak, err := sql.Open("sqlite", "file:"+path+".bak-v0.1.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bak.Close()
+	var n int
+	if err := bak.QueryRow("SELECT count(*) FROM runs").Scan(&n); err != nil || n != 1 {
+		t.Fatalf("backup runs = %d, %v", n, err)
+	}
+
+	// The older binary refuses the newer database, naming the release.
+	migrations = fstest.MapFS{"migrations/001_init.sql": {Data: base}}
+	_, err = Open(ctx, path, "v0.1.0")
+	if err == nil || !strings.Contains(err.Error(), "install gosha v0.2.0 or newer") {
+		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -216,5 +236,41 @@ func TestLastDelivered(t *testing.T) {
 	got, err := s.LastDelivered(ctx, "p", "NXT-1")
 	if err != nil || got == nil || got.ID != first.ID || got.Report != first.Report {
 		t.Fatalf("LastDelivered = %+v, %v", got, err)
+	}
+}
+
+func TestCounts(t *testing.T) {
+	ctx := context.Background()
+	s, _ := open(t)
+	day := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
+	add := func(project string, blockedAt time.Time, outcome string) {
+		r := &Run{Project: project, TicketID: "T", Mode: "fresh"}
+		if err := s.CreateRun(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		r.BlockedAt = blockedAt
+		if err := s.UpdateRun(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		if outcome != "" {
+			if err := s.FinishRun(ctx, r.ID, outcome); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	add("a", day.Add(9*time.Hour+500*time.Millisecond), "")
+	add("a", time.Time{}, OutcomeDelivered) // finished now: outside the window
+	add("b", day.Add(-time.Nanosecond), "")
+	add("b", day.Add(24*time.Hour), "")
+	got, err := s.Counts(ctx, day, day.Add(24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["a"] != (DayCounts{Blocked: 1}) || got["b"] != (DayCounts{}) {
+		t.Errorf("counts = %+v", got)
+	}
+	got, _ = s.Counts(ctx, time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+	if got["a"].Delivered != 1 {
+		t.Errorf("delivered = %+v", got)
 	}
 }

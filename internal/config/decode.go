@@ -28,7 +28,7 @@ func (e *FieldError) Unwrap() error { return e.Err }
 
 // decode parses YAML into out (a pointer to a struct). Unknown fields are
 // errors, and empty string fields with a `default:"…"` tag get their
-// default. Config files hold no secrets (DESIGN §5.4).
+// default. Config files hold no secrets.
 func decode(file string, data []byte, out any) error {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)

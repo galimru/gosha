@@ -1,5 +1,4 @@
-// Package store persists runs, comment cursors and project state in SQLite
-// (DESIGN §10).
+// Package store persists runs, comment cursors and project state in SQLite.
 package store
 
 import (
@@ -11,19 +10,26 @@ import (
 	"io/fs"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
 //go:embed migrations/*.sql
-var migrations embed.FS
+var embedded embed.FS
+
+// migrations is swapped in tests.
+var migrations fs.FS = embedded
 
 // Store is the Gosha database.
 type Store struct{ db *sql.DB }
 
 // Open opens (creating if needed) the database at path and migrates it.
-func Open(ctx context.Context, path string) (*Store, error) {
+// version is the running gosha's version: it's recorded with every
+// migration, names the backup taken before one, and is what a newer
+// database tells the user to install.
+func Open(ctx context.Context, path, version string) (*Store, error) {
 	// Create the file ourselves so it's private from the start.
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
@@ -36,7 +42,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 	s := &Store{db: db}
-	if err := s.migrate(ctx); err != nil {
+	if err := s.migrate(ctx, path, version); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -45,21 +51,41 @@ func Open(ctx context.Context, path string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-func (s *Store) migrate(ctx context.Context) error {
+// metaVersion is the meta key holding the gosha version that last migrated
+// the schema.
+const metaVersion = "gosha_version"
+
+// migrate applies the migrations the database doesn't have yet. An existing
+// database is copied to <path>.bak-<old version> first, and one newer than
+// this binary is refused.
+func (s *Store) migrate(ctx context.Context, path, version string) error {
 	names, err := fs.Glob(migrations, "migrations/*.sql")
 	if err != nil {
 		return err
 	}
 	sort.Strings(names)
-	var version int
-	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+	var schema int
+	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&schema); err != nil {
 		return fmt.Errorf("store version: %w", err)
 	}
-	if version > len(names) {
-		return fmt.Errorf("store schema version %d is newer than this gosha (%d): upgrade gosha", version, len(names))
+	if schema == len(names) {
+		return nil
 	}
-	for i := version; i < len(names); i++ {
-		body, err := migrations.ReadFile(names[i])
+	if schema > len(names) {
+		by, _ := s.Meta(ctx, metaVersion)
+		if by == "" {
+			by = "a newer version"
+		}
+		return fmt.Errorf("%s has schema %d, written by gosha %s; this gosha (%s) knows schema %d: install gosha %s or newer",
+			path, schema, by, version, len(names), by)
+	}
+	if schema > 0 {
+		if err := s.backup(ctx, path); err != nil {
+			return err
+		}
+	}
+	for i := schema; i < len(names); i++ {
+		body, err := fs.ReadFile(migrations, names[i])
 		if err != nil {
 			return err
 		}
@@ -79,7 +105,48 @@ func (s *Store) migrate(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+	return s.SetMeta(ctx, metaVersion, version)
+}
+
+// backup writes a consistent copy of the database next to it, named after
+// the gosha version that last migrated it.
+func (s *Store) backup(ctx context.Context, path string) error {
+	by, err := s.Meta(ctx, metaVersion)
+	if err != nil {
+		return err
+	}
+	if by == "" {
+		by = "unknown"
+	}
+	dst := path + ".bak-" + by
+	if err := os.Remove(dst); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("store backup: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, "VACUUM INTO ?", dst); err != nil {
+		return fmt.Errorf("store backup: %w", err)
+	}
+	return os.Chmod(dst, 0o600)
+}
+
+// Meta returns a daemon-wide value, or "" if unset (or before the meta
+// table exists).
+func (s *Store) Meta(ctx context.Context, key string) (string, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = ?`, key).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil && strings.Contains(err.Error(), "no such table") {
+		return "", nil
+	}
+	return v, err
+}
+
+// SetMeta stores a daemon-wide value.
+func (s *Store) SetMeta(ctx context.Context, key, value string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO meta (key, value) VALUES (?, ?)
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, value)
+	return err
 }
 
 const timeFormat = time.RFC3339Nano
@@ -121,8 +188,10 @@ type Run struct {
 	ImplSession string
 	BaseBranch  string
 	PRURL       string
-	// BlockedReason is why the run last went Blocked, while it's blocked.
+	// BlockedReason is why the run last went Blocked, while it's blocked,
+	// and BlockedAt when it last went Blocked.
 	BlockedReason string
+	BlockedAt     time.Time
 	// AgentRuns counts agent passes, numbering the transcripts.
 	AgentRuns int
 	// ReviewedSHA is the head the last review ran on, and ReviewID the
@@ -140,10 +209,11 @@ type Run struct {
 	// MergeSHA is the merge commit once Gosha has merged the PR.
 	MergeSHA string
 	// Report is the pipeline's JSON record of what to report on delivery.
-	Report    string
-	Outcome   string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Report     string
+	Outcome    string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	FinishedAt time.Time
 }
 
 // CreateRun records a new open run and sets its ID.
@@ -167,12 +237,12 @@ func (s *Store) CreateRun(ctx context.Context, r *Run) error {
 func (s *Store) UpdateRun(ctx context.Context, r *Run) error {
 	ts := now()
 	_, err := s.db.ExecContext(ctx, `UPDATE runs SET mode = ?, branch = ?, pr_number = ?, step = ?, review_round = ?,
-		check_round = ?, impl_session = ?, base_branch = ?, pr_url = ?, blocked_reason = ?, agent_runs = ?,
+		check_round = ?, impl_session = ?, base_branch = ?, pr_url = ?, blocked_reason = ?, blocked_at = ?, agent_runs = ?,
 		reviewed_sha = ?, review_id = ?, review_result = ?, last_reply = ?,
 		checked_sha = ?, checks_result = ?, merge_sha = ?, report = ?, updated_at = ?
 		WHERE id = ?`,
 		r.Mode, r.Branch, r.PRNumber, r.Step, r.ReviewRound, r.CheckRound, r.ImplSession,
-		r.BaseBranch, r.PRURL, r.BlockedReason, r.AgentRuns,
+		r.BaseBranch, r.PRURL, r.BlockedReason, formatTime(r.BlockedAt), r.AgentRuns,
 		r.ReviewedSHA, r.ReviewID, r.ReviewResult, r.LastReply,
 		r.CheckedSHA, r.ChecksResult, r.MergeSHA, r.Report, ts, r.ID)
 	if err != nil {
@@ -190,20 +260,20 @@ func (s *Store) FinishRun(ctx context.Context, id int64, outcome string) error {
 }
 
 const runColumns = `id, project, ticket_id, mode, branch, pr_number, step, review_round, check_round, impl_session,
-	base_branch, pr_url, blocked_reason, agent_runs, reviewed_sha, review_id, review_result, last_reply,
-	checked_sha, checks_result, merge_sha, report, outcome, created_at, updated_at`
+	base_branch, pr_url, blocked_reason, blocked_at, agent_runs, reviewed_sha, review_id, review_result, last_reply,
+	checked_sha, checks_result, merge_sha, report, outcome, created_at, updated_at, COALESCE(finished_at, '')`
 
 func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 	var r Run
-	var created, updated string
+	var created, updated, blocked, finished string
 	err := row.Scan(&r.ID, &r.Project, &r.TicketID, &r.Mode, &r.Branch, &r.PRNumber, &r.Step,
-		&r.ReviewRound, &r.CheckRound, &r.ImplSession, &r.BaseBranch, &r.PRURL, &r.BlockedReason, &r.AgentRuns,
+		&r.ReviewRound, &r.CheckRound, &r.ImplSession, &r.BaseBranch, &r.PRURL, &r.BlockedReason, &blocked, &r.AgentRuns,
 		&r.ReviewedSHA, &r.ReviewID, &r.ReviewResult, &r.LastReply,
-		&r.CheckedSHA, &r.ChecksResult, &r.MergeSHA, &r.Report, &r.Outcome, &created, &updated)
+		&r.CheckedSHA, &r.ChecksResult, &r.MergeSHA, &r.Report, &r.Outcome, &created, &updated, &finished)
 	if err != nil {
 		return nil, err
 	}
-	r.CreatedAt, r.UpdatedAt = parseTime(created), parseTime(updated)
+	r.CreatedAt, r.UpdatedAt, r.BlockedAt, r.FinishedAt = parseTime(created), parseTime(updated), parseTime(blocked), parseTime(finished)
 	return &r, nil
 }
 
@@ -257,8 +327,38 @@ func (s *Store) OpenRuns(ctx context.Context) ([]*Run, error) {
 	return out, rows.Err()
 }
 
+// DayCounts is what a project's runs did in a time window, for the digest.
+type DayCounts struct {
+	Delivered, Blocked int
+}
+
+// Counts reports, per project, the runs delivered and the runs that went
+// Blocked in [from, to). Times are compared as times, not as text: stored
+// times have a varying number of fraction digits.
+func (s *Store) Counts(ctx context.Context, from, to time.Time) (map[string]DayCounts, error) {
+	f, t := formatTime(from), formatTime(to)
+	rows, err := s.db.QueryContext(ctx, `SELECT project,
+		SUM(outcome = ? AND julianday(finished_at) >= julianday(?) AND julianday(finished_at) < julianday(?)),
+		SUM(blocked_at != '' AND julianday(blocked_at) >= julianday(?) AND julianday(blocked_at) < julianday(?))
+		FROM runs GROUP BY project`, OutcomeDelivered, f, t, f, t)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]DayCounts{}
+	for rows.Next() {
+		var p string
+		var c DayCounts
+		if err := rows.Scan(&p, &c.Delivered, &c.Blocked); err != nil {
+			return nil, err
+		}
+		out[p] = c
+	}
+	return out, rows.Err()
+}
+
 // Branches lists every branch Gosha has used in a project, for the rule
-// that it never takes over a branch it doesn't own (DESIGN §8.2).
+// that it never takes over a branch it doesn't own.
 func (s *Store) Branches(ctx context.Context, project string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT branch FROM runs WHERE project = ? AND branch != ''`, project)
 	if err != nil {
@@ -319,14 +419,14 @@ type ProjectState struct {
 	Status  string
 	Reason  string
 	// Notion is set when the pause is over Notion access, which only a
-	// pickup's context refresh can clear (DESIGN §6.2).
+	// pickup's context refresh can clear.
 	Notion    bool
 	Commit    string
 	UpdatedAt time.Time
 }
 
 // SetProjectState records a project's state and reports whether the status
-// changed, so callers notify only on transitions (DESIGN §5.2).
+// changed, so callers notify only on transitions.
 func (s *Store) SetProjectState(ctx context.Context, st ProjectState) (changed bool, err error) {
 	prev, err := s.ProjectState(ctx, st.Project)
 	if err != nil {

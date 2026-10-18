@@ -12,7 +12,7 @@ import (
 
 var envKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// Secret keys Gosha reads (DESIGN §5.4). Config files never hold secrets.
+// Secret keys Gosha reads. Config files never hold secrets.
 const (
 	KeyLinearClientID     = "LINEAR_CLIENT_ID"
 	KeyLinearClientSecret = "LINEAR_CLIENT_SECRET"
@@ -21,7 +21,7 @@ const (
 	KeyTelegramToken      = "TELEGRAM_BOT_TOKEN"
 )
 
-// Secrets resolves secret keys (DESIGN §5.4): the project's secrets.env
+// Secrets resolves secret keys: the project's secrets.env
 // first, then the shared secrets.env, then the environment.
 type Secrets struct {
 	layers []map[string]string

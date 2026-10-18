@@ -159,6 +159,6 @@ Findings:
 
 ## Open items
 
-- **Linux runner (best effort, unverified):** sandbox on bubblewrap, required packages (Claude Code's docs list `bubblewrap` and `socat`), root refusal (1g). To be checked before M7 on a real Linux host.
+- **Linux runner (best effort, unverified):** sandbox on bubblewrap, required packages (Claude Code's docs list `bubblewrap` and `socat`), root refusal (1g). To be checked in M9 on a real Linux host.
 - **Usage-limit payload at an actual limit:** capture the first real occurrence and adjust the parser.
 - **Production agent layout:** run `TestRealClaude` with a setup token (`GOSHA_TEST_CLAUDE=1`), so the isolated `CLAUDE_CONFIG_DIR` under `~/.gosha` is exercised (shell snapshots and session files live there, outside what Bash may read).

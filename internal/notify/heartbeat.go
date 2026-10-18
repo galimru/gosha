@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Ping GETs a heartbeat URL (DESIGN §9): a dead-man's switch service that
+// Ping GETs a heartbeat URL: a dead-man's switch service that
 // alerts when the pings stop, which Gosha can't do itself once it's down.
 func Ping(ctx context.Context, url string) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)

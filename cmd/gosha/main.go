@@ -1,10 +1,11 @@
-// Command gosha is the Gosha CLI and daemon (DESIGN §11.6).
+// Command gosha is the Gosha CLI and daemon.
 package main
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/galimru/gosha/internal/config"
 	"github.com/galimru/gosha/internal/github"
@@ -60,19 +62,29 @@ func (a *app) rootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			return a.init()
+			return a.init(longRunning[cmd.Name()])
 		},
 	}
 	root.PersistentFlags().StringVar(&a.homeFlag, "home", "", "Gosha home directory (default $GOSHA_HOME or ~/.gosha)")
 	root.PersistentFlags().StringVar(&a.logLevel, "log-level", "info", "log level: debug, info, warn, error")
 	root.AddCommand(
 		a.addCmd(), a.removeCmd(), a.listCmd(), a.validateCmd(), a.doctorCmd(),
-		a.secretsCmd(), a.statusCmd(), a.runCmd(), a.contextCmd(),
+		a.secretsCmd(), a.statusCmd(), a.runCmd(), a.daemonCmd(), a.logsCmd(), a.serviceCmd(), a.initCmd(), a.configCmd(), a.pruneCmd(), a.upgradeCmd(), a.contextCmd(),
 	)
 	return root
 }
 
-func (a *app) init() error {
+// longRunning are the commands that rotate the log file. Short commands
+// only append to it, so they never rotate it from under the daemon.
+var longRunning = map[string]bool{"daemon": true, "run": true}
+
+// Log rotation: gosha.log plus this many compressed backups of this size.
+const (
+	logMaxMB   = 20
+	logBackups = 5
+)
+
+func (a *app) init(rotate bool) error {
 	var err error
 	if a.home, err = config.ResolveHome(a.homeFlag); err != nil {
 		return err
@@ -87,7 +99,7 @@ func (a *app) init() error {
 	// Log to the file only once the home exists; commands never create it
 	// just to log.
 	if fi, err := os.Stat(a.home.Dir()); err == nil && fi.IsDir() {
-		if f, err := openLog(a.home.LogFile()); err == nil {
+		if f, err := openLog(a.home.LogFile(), rotate); err == nil {
 			a.closers = append(a.closers, func() { f.Close() })
 			h = teeHandler{h, slog.NewJSONHandler(f, opts)}
 		}
@@ -96,9 +108,12 @@ func (a *app) init() error {
 	return nil
 }
 
-func openLog(path string) (*os.File, error) {
+func openLog(path string, rotate bool) (io.WriteCloser, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
+	}
+	if rotate {
+		return &lumberjack.Logger{Filename: path, MaxSize: logMaxMB, MaxBackups: logBackups, Compress: true}, nil
 	}
 	return os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 }
@@ -120,7 +135,7 @@ func (a *app) redact(s string) string {
 // GitHub App and the Telegram feed.
 func (a *app) env(ctx context.Context) (*pipeline.Env, error) {
 	if fi, err := os.Stat(a.home.Dir()); err != nil || !fi.IsDir() {
-		return nil, fmt.Errorf("no Gosha home at %s: create it with config.yaml (DESIGN §5.1), or pass --home", a.home.Dir())
+		return nil, fmt.Errorf("no Gosha home at %s: create it with config.yaml, or pass --home", a.home.Dir())
 	}
 	secrets, err := config.LoadSecrets(a.home, "", a.red)
 	if err != nil {
@@ -138,7 +153,7 @@ func (a *app) env(ctx context.Context) (*pipeline.Env, error) {
 	if err != nil {
 		return nil, err
 	}
-	st, err := store.Open(ctx, a.home.DB())
+	st, err := store.Open(ctx, a.home.DB(), version)
 	if err != nil {
 		return nil, err
 	}
@@ -153,10 +168,14 @@ func (a *app) env(ctx context.Context) (*pipeline.Env, error) {
 		}
 		tg.Close()
 	})
-	return &pipeline.Env{Home: a.home, Global: g, App: app, Store: st, Notify: tg, Log: a.log, Redactor: a.red}, nil
+	limit, err := pipeline.NewUsageLimit(ctx, st, tg, a.log)
+	if err != nil {
+		return nil, err
+	}
+	return &pipeline.Env{Home: a.home, Global: g, App: app, Store: st, Notify: tg, Log: a.log, Redactor: a.red, Limit: limit}, nil
 }
 
-// refuseRoot stops commands that run agents from running as root (DESIGN §11.2).
+// refuseRoot stops commands that run agents from running as root.
 func refuseRoot() error {
 	if geteuid() == 0 {
 		return errors.New("refusing to run as root: agents execute commands derived from ticket text. " +

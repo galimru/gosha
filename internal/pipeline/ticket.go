@@ -20,7 +20,7 @@ import (
 	"github.com/galimru/gosha/internal/tmpl"
 )
 
-// Steps a run records (DESIGN §8).
+// Steps a run records.
 const (
 	StepClaimed   = "claimed"
 	StepImplement = "implement"
@@ -57,12 +57,14 @@ type issueOps interface {
 	CreateComment(ctx context.Context, issueID, body string) (string, error)
 	CreateAttachment(ctx context.Context, issueID, link, title, subtitle string) error
 	Comments(ctx context.Context, issueID string) ([]linear.Comment, error)
+	Issue(ctx context.Context, id string) (*linear.Issue, error)
 }
 
 // prOps is the GitHub surface a ticket run uses.
 type prOps interface {
 	Token(ctx context.Context) (string, error)
 	PR(ctx context.Context, number int) (*github.PR, error)
+	ClosePR(ctx context.Context, number int) error
 	CreatePR(ctx context.Context, branch, base, title, body string) (*github.PR, error)
 	CreateReview(ctx context.Context, number int, sha, body string, comments []github.ReviewComment) (int64, error)
 	CreateComment(ctx context.Context, number int, body string) error
@@ -111,18 +113,26 @@ type ticket struct {
 	// recheck is set when the next review is of a fix for failed checks or
 	// conflicts: approving it doesn't use up a review round.
 	recheck bool
+	// moved is how the pickup learns that a human moved the ticket.
+	moved mover
 }
 
-// agentPass starts an agent pass bounded by what's left of
-// the budget, in t.actx. end charges the time it took.
-func (t *ticket) agentPass(ctx context.Context) (end func()) {
+// agentPass waits for an agent slot, then starts an agent pass bounded by
+// what's left of the budget, in t.actx. end charges the time it took and
+// frees the slot; waiting for the slot isn't charged.
+func (t *ticket) agentPass(ctx context.Context) (end func(), err error) {
+	release, err := t.e.acquireSlot(ctx)
+	if err != nil {
+		return nil, err
+	}
 	start := time.Now()
 	actx, cancel := context.WithTimeoutCause(ctx, t.budget, errAgentTimeout)
 	t.actx = actx
 	return func() {
 		t.budget -= time.Since(start)
 		cancel()
-	}
+		release()
+	}, nil
 }
 
 // Pass does one pickup pass for a project: it picks the next Ready ticket
@@ -137,6 +147,9 @@ func (e *Env) Pass(ctx context.Context, name, only string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if err := e.reconcileCanceled(ctx, p, lin.Client, p.Install); err != nil {
+		return false, err
+	}
 	c, err := e.interrupted(ctx, name, lin, only)
 	if err != nil {
 		return false, err
@@ -145,6 +158,9 @@ func (e *Env) Pass(ctx context.Context, name, only string) (bool, error) {
 		cands, err := e.candidates(ctx, name, lin, only)
 		if err != nil {
 			return false, err
+		}
+		if only == "" {
+			e.noteReady(name, len(cands))
 		}
 		for _, d := range Plan(p.Config, lin.States, cands) {
 			if d.Action == Pickup {
@@ -166,15 +182,22 @@ func (e *Env) Pass(ctx context.Context, name, only string) (bool, error) {
 		return false, err
 	}
 	e.resume(ctx, p)
-	kb, err := e.freezeContext(p, c.Issue.Identifier)
-	if err != nil {
-		return false, err
-	}
 	bot, err := e.botIdentity(ctx, p.Install)
 	if err != nil {
 		return false, err
 	}
-	return true, e.handle(ctx, p, lin.States, lin.Client, p.Install, bot, kb, *c)
+	// Held until the run is claimed, so a cleanup can't remove the
+	// workspace in between.
+	unlock, err := e.lockWorkspace(name)
+	if err != nil {
+		return false, err
+	}
+	kb, err := e.freezeContext(p, c.Issue.Identifier)
+	if err != nil {
+		unlock()
+		return false, err
+	}
+	return true, e.handle(ctx, p, lin.States, lin.Client, p.Install, bot, kb, *c, unlock)
 }
 
 // interrupted finds a run that stopped mid-step (usage limit, shutdown)
@@ -232,26 +255,42 @@ func (e *Env) botIdentity(ctx context.Context, inst *github.Installation) (agent
 	return *e.bot, nil
 }
 
-// handle claims a ticket and runs it (DESIGN §8.1, §8.2). Failures after
+// handle claims a ticket and runs it. Failures after
 // the claim go Blocked, except a usage limit or a shutdown: those leave the
-// ticket In Progress and the run resumable.
-func (e *Env) handle(ctx context.Context, p *Project, st *linear.States, is issueOps, prs prOps, bot agent.Identity, kb tmpl.Context, c Candidate) error {
+// ticket In Progress and the run resumable. claimed, if set, is called
+// once the run is claimed (or the claim failed).
+func (e *Env) handle(ctx context.Context, p *Project, st *linear.States, is issueOps, prs prOps, bot agent.Identity, kb tmpl.Context, c Candidate, claimed func()) error {
 	t := &ticket{e: e, p: p, states: st, issues: is, prs: prs, bot: bot, kb: kb,
 		issue: c.Issue, comments: c.NewComments, run: c.OpenRun, prev: c.Delivered, report: &delivery{}, started: time.Now(),
 		fromReady: c.Issue.State.ID != st.InProgress.ID, resuming: c.OpenRun != nil, budget: p.Config.Agent.Timeout}
 	if t.run != nil {
 		t.report = loadReport(t.run)
 	}
+	release := func() {
+		if claimed != nil {
+			claimed()
+			claimed = nil
+		}
+	}
+	defer release()
 	if err := t.claim(ctx, c.Comments); err != nil {
 		return err
 	}
-	err := t.drive(ctx)
+	release()
+	wctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	stop := t.watch(wctx, cancel)
+	err := t.drive(wctx)
+	stop()
 	var le *agent.LimitError
 	switch {
 	case err == nil:
 		return nil
+	case ctx.Err() == nil && errors.Is(context.Cause(wctx), errTicketMoved):
+		return t.stopped(ctx)
 	case errors.As(err, &le):
-		e.Notify.Send(notify.Event{Project: p.Name, Text: fmt.Sprintf("%s · ⏸ %v", t.issue.Identifier, le)})
+		e.Log.Warn("usage limit", "project", p.Name, "ticket", t.issue.Identifier, "step", t.run.Step, "err", le)
+		e.Limit.Hit(ctx, le.ResetsAt)
 		return err
 	case ctx.Err() != nil:
 		return err
@@ -375,7 +414,7 @@ func (t *ticket) restart(ctx context.Context, r *store.Run) error {
 
 // chooseBranch takes the ticket's branch name and adds -2, -3, … while the
 // name is taken, on GitHub or by an earlier run: Gosha never takes over a
-// branch it doesn't own (DESIGN §8.2). reuse is a name this run may take
+// branch it doesn't own. reuse is a name this run may take
 // back because it just deleted it.
 func (t *ticket) chooseBranch(ctx context.Context, reuse string) (string, error) {
 	if reuse != "" {
@@ -408,7 +447,7 @@ func (t *ticket) chooseBranch(ctx context.Context, reuse string) (string, error)
 	}
 }
 
-// workspace is the ticket's agent workspace (DESIGN §11.3).
+// workspace is the ticket's agent workspace.
 func (t *ticket) workspace() config.Workspace {
 	return t.e.Home.Workspace(t.p.Name, t.issue.Identifier)
 }
@@ -422,7 +461,7 @@ func (t *ticket) save(ctx context.Context, step string) error {
 }
 
 // implement runs the implementer in the ticket checkout, then collects,
-// pushes and opens the PR (DESIGN §8.2).
+// pushes and opens the PR.
 func (t *ticket) implement(ctx context.Context) error {
 	if err := t.save(ctx, StepImplement); err != nil {
 		return err
@@ -511,7 +550,11 @@ func nonEmpty(s ...string) []string {
 // its failures. It returns a nil result when the pass ended the step: the
 // ticket went Blocked (nil error), or a usage limit or shutdown (error).
 func (t *ticket) runImplementer(ctx context.Context, spec agent.Spec, resultFile string) (*agent.ImplementerResult, error) {
-	defer t.agentPass(ctx)()
+	end, err := t.agentPass(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer end()
 	actx := t.actx
 	res, out, err := t.e.implement(actx, spec, resultFile)
 	if err != nil && spec.Resume != "" && !isStop(actx, err) {

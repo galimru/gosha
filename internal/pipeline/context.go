@@ -25,9 +25,9 @@ func (e *Env) Mirror(p *Project) (*notion.Mirror, error) {
 	return &notion.Mirror{Dir: e.Home.Project(p.Name).Context(), Root: root, API: api}, nil
 }
 
-// refreshContext brings the project's mirror up to date before a pickup
-// (DESIGN §6.2). Without access to the root page, the project pauses (fail
-// closed, like an invalid config) until a later pickup's refresh succeeds.
+// refreshContext brings the project's mirror up to date before a pickup.
+// Without access to the root page, the project pauses (fail closed, like an
+// invalid config) until a later pickup's refresh succeeds.
 // Any other failure keeps the last mirror, and is an error only when there
 // is none yet.
 func (e *Env) refreshContext(ctx context.Context, p *Project) error {

@@ -143,7 +143,7 @@ var ErrHeadMoved = errors.New("the pull request's head moved since it was checke
 var ErrNotMergeable = errors.New("the pull request is not mergeable")
 
 // Merge merges a pull request with method (squash, merge or rebase), only
-// if its head is still sha (DESIGN §8.5). It returns the merge commit.
+// if its head is still sha. It returns the merge commit.
 func (i *Installation) Merge(ctx context.Context, number int, sha, method, title, message string) (string, error) {
 	res, resp, err := i.api.PullRequests.Merge(ctx, i.Repo.Owner, i.Repo.Name, number, message, &gh.PullRequestOptions{
 		CommitTitle: title, SHA: sha, MergeMethod: method, DontDefaultIfBlank: true,

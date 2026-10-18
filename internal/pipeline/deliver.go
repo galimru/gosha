@@ -15,11 +15,11 @@ import (
 	"github.com/galimru/gosha/internal/tmpl"
 )
 
-// deployPoll is how often the deploy run is polled (DESIGN §8.7). A
+// deployPoll is how often the deploy run is polled. A
 // variable for tests.
 var deployPoll = 15 * time.Second
 
-// delivery is what the Delivered comment reports (DESIGN §3). It's kept
+// delivery is what the Delivered comment reports. It's kept
 // on the run as it's gathered, so a delivery resumed after a crash still
 // has it, and a follow-up can be told what was shipped.
 type delivery struct {
@@ -94,7 +94,7 @@ func (t *ticket) followUp() tmpl.FollowUp {
 	return f
 }
 
-// afterMerge cleans up the merged branch and checkout (DESIGN §8.5), then
+// afterMerge cleans up the merged branch and checkout, then
 // watches the deploy if one is configured, and delivers.
 func (t *ticket) afterMerge(ctx context.Context) error {
 	tok, err := t.prs.Token(ctx)
@@ -115,7 +115,7 @@ func (t *ticket) afterMerge(ctx context.Context) error {
 }
 
 // deployWatch waits for the deploy workflow's run on the merge commit and
-// records how it went (DESIGN §8.7). The code is merged already, so the
+// records how it went. The code is merged already, so the
 // ticket is delivered either way: the Delivered comment reports the deploy,
 // and a failure is fixed through a follow-up.
 func (t *ticket) deployWatch(ctx context.Context) error {
@@ -188,11 +188,12 @@ func (t *ticket) deployFailure(ctx context.Context, run *github.WorkflowRun) str
 	return strings.TrimSpace(b.String())
 }
 
-// deliver reports on the ticket and moves it to In Review (DESIGN §8.8).
+// deliver reports on the ticket and moves it to In Review.
 func (t *ticket) deliver(ctx context.Context) error {
 	if _, err := t.issues.CreateComment(ctx, t.issue.ID, t.deliveredComment()); err != nil {
 		return err
 	}
+	t.leave()
 	if err := t.issues.Transition(ctx, t.issue.ID, t.states.InReview.ID); err != nil {
 		return err
 	}
@@ -208,7 +209,7 @@ func (t *ticket) deliver(ctx context.Context) error {
 	return nil
 }
 
-// deliveredComment is the Delivered comment (DESIGN §3): what shipped, the
+// deliveredComment is the Delivered comment: what shipped, the
 // deploy, and what was assumed or left out. The rest is on the PR.
 func (t *ticket) deliveredComment() string {
 	d, red := t.report, t.e.Redactor.Redact

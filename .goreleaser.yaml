@@ -1,0 +1,27 @@
+# Release builds, run by .github/workflows/release.yml on a new v* tag.
+version: 2
+project_name: gosha
+
+builds:
+  - main: ./cmd/gosha
+    env:
+      - CGO_ENABLED=0 # modernc.org/sqlite is pure Go
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{ .Tag }}
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [README.md]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude: ["^docs", "^test", "^ci", "^chore", "^build"]
