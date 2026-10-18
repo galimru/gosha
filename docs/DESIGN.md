@@ -668,9 +668,9 @@ The project's config is **not** in this tree; it's read from the repo (§5.2). `
 ### 11.6 CLI
 Commands act on the `~/.gosha` of the user running them, normally the same user the service runs as.
 
-- `gosha init`: run in a local checkout; writes a starter `.gosha/config.yaml` to commit
+- `gosha init [path] --team NXT --notion <page> [--name]`: run in a local checkout; writes a starter `.gosha/config.yaml` to commit, with the required fields set and every optional one commented out with its default. The name defaults to the directory's. It never overwrites an existing config, and writes nothing that `validate` would reject
 - `gosha add <repo-url>` / `remove` / `list`
-- `gosha config show <project>`: effective config
+- `gosha config show <project>`: the effective config, as YAML: the file on the default branch with every default filled in
 - `gosha validate [path]`: an offline check of a repo's `.gosha/config.yaml` (it parses, fields are valid, referenced files exist). It needs no secrets or network, so it can run in the project's CI.
 - `gosha doctor [project]`: everything about the host: git, claude, the sandbox tools, file permissions, the global config, the GitHub App, and for each project (or the one named) its config on the default branch, its secrets, its Linear team, states and actor (§8.6), and Notion access to its root page
 - `gosha status`: projects, active or paused state (and why), the context mirror (pages, last refresh), current ticket and step, usage-limit pause
