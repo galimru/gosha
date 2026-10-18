@@ -50,18 +50,10 @@ func (t *ticket) checks(ctx context.Context) error {
 	}
 	if res.ok() {
 		t.run.CheckedSHA, t.run.ChecksResult = head, ""
-		t.report.Checks = nil
-		for _, c := range res.checks {
-			t.report.Checks = append(t.report.Checks, c.Name)
-		}
 		if err := t.save(ctx, StepChecks); err != nil {
 			return err
 		}
-		msg := fmt.Sprintf("%s · checks ✅ %d/%d", t.issue.Identifier, len(res.checks), len(res.checks))
-		if len(res.checks) == 0 {
-			msg = fmt.Sprintf("%s · no checks expected", t.issue.Identifier)
-		}
-		t.notify(msg, t.prLink())
+		t.e.Log.Info("checks passed", "project", t.p.Name, "ticket", t.issue.Identifier, "checks", len(res.checks))
 		return t.merge(ctx)
 	}
 	if len(res.failed)+len(res.pending) == 0 {
@@ -77,11 +69,10 @@ func (t *ticket) checks(ctx context.Context) error {
 			limit, codeList(names), checkLinks(res)), nil)
 	}
 	fb := tmpl.Feedback{CI: t.ciFeedback(ctx, res)}
-	t.report.Fixes = append(t.report.Fixes, fmt.Sprintf("Checks failed: %s → fixed by the implementer", codeList(names)))
 	if err := t.recordFailure(ctx, head, fb); err != nil {
 		return err
 	}
-	t.notify(fmt.Sprintf("%s · checks ❌ %s → fixing %d/%d", t.issue.Identifier, strings.Join(names, ", "), t.run.CheckRound, limit), t.prLink())
+	t.e.Log.Info("checks failed", "project", t.p.Name, "ticket", t.issue.Identifier, "failed", names, "round", t.run.CheckRound)
 	return t.fix(ctx, fb)
 }
 
@@ -126,21 +117,13 @@ func (t *ticket) savedFailure(ctx context.Context) (*tmpl.Feedback, error) {
 	return &fb, nil
 }
 
-// waitChecks polls head's checks until every expected one has started and
-// all have finished, start_grace or checks.timeout runs out, or ctx ends.
+// waitChecks polls head's checks until all have finished, start_grace or
+// checks.timeout runs out, or ctx ends (DESIGN §8.4). With checks.required
+// set, those must all appear; without it, whatever appears within
+// start_grace must pass, and nothing appearing is a pass.
 func (t *ticket) waitChecks(ctx context.Context, head string) (checkResult, error) {
 	cfg := t.p.Config.Checks
 	required := cfg.Required
-	anyExpected := false
-	if len(required) == 0 {
-		var err error
-		if anyExpected, err = t.p.Repo.HasCIWorkflows(ctx, "refs/remotes/origin/"+t.run.BaseBranch); err != nil {
-			return checkResult{}, err
-		}
-		if !anyExpected {
-			return checkResult{}, nil
-		}
-	}
 	start := time.Now()
 	settled := false
 	for {
@@ -154,9 +137,6 @@ func (t *ticket) waitChecks(ctx context.Context, head string) (checkResult, erro
 				res.missing = append(res.missing, name)
 			}
 		}
-		if anyExpected && len(cs) == 0 {
-			res.missing = []string{"any check"}
-		}
 		for _, c := range cs {
 			switch {
 			case c.Status != "completed":
@@ -167,6 +147,8 @@ func (t *ticket) waitChecks(ctx context.Context, head string) (checkResult, erro
 		}
 		elapsed := time.Since(start)
 		switch {
+		case len(required) == 0 && len(cs) == 0 && elapsed < cfg.StartGrace:
+			// Nothing yet, but checks may still start.
 		case len(res.missing) == 0 && len(res.pending) == 0:
 			if settled {
 				return res, nil
@@ -266,20 +248,20 @@ func (t *ticket) fix(ctx context.Context, fb tmpl.Feedback) error {
 	if err := t.save(ctx, StepFix); err != nil {
 		return err
 	}
-	if fb.Conflicts != "" {
+	if fb.Conflicts {
 		// A fresh checkout carries the latest base for the agent to merge.
 		if err := os.RemoveAll(t.checkout()); err != nil {
 			return err
 		}
 	}
-	round, limit := t.run.CheckRound, t.p.Config.Checks.MaxRounds
+	round := t.run.CheckRound
 	res, changed, err := t.feedbackPass(ctx, round, fb)
 	if res == nil {
 		return err
 	}
 	summary := strings.TrimSpace(t.e.Redactor.Redact(res.Summary))
 	reply := fmt.Sprintf("**Check round %d: fixed.**\n\n", round)
-	if fb.Conflicts != "" {
+	if fb.Conflicts {
 		merged, err := t.p.Repo.IsAncestor(ctx, "refs/remotes/origin/"+t.run.BaseBranch, "refs/heads/"+t.run.Branch)
 		if err != nil {
 			return err
@@ -305,11 +287,6 @@ func (t *ticket) fix(ctx context.Context, fb tmpl.Feedback) error {
 	if err := t.save(ctx, StepReview); err != nil {
 		return err
 	}
-	diff, err := t.p.Repo.Diff(ctx, t.run.BaseBranch, t.run.Branch)
-	if err != nil {
-		return err
-	}
-	t.notify(fmt.Sprintf("%s · fixed (check round %d/%d) · PR now %s", t.issue.Identifier, round, limit, diff), t.prLink())
 	t.recheck = true
 	return t.reviewLoop(ctx, false)
 }

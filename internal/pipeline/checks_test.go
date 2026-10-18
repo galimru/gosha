@@ -57,39 +57,39 @@ func TestChecksGreenMerges(t *testing.T) {
 	if h.onUpstream(r.Branch) {
 		t.Error("branch not deleted")
 	}
-	if _, err := os.Stat(filepath.Join(h.env.Home.Project("demo").Worktrees(), "NXT-12")); !os.IsNotExist(err) {
-		t.Errorf("checkout left behind: %v", err)
+	if _, err := os.Stat(h.env.Home.Workspace("demo", "NXT-12").Dir); !os.IsNotExist(err) {
+		t.Errorf("workspace left behind: %v", err)
 	}
 	if h.lin.state() != states.InReview.ID || len(h.lin.comments) != 1 {
 		t.Fatalf("linear = %+v", h.lin)
 	}
-	for _, want := range []string{"**Delivered:** [PR #1]", "+1 −0 in 1 files", "Added login.", "Checks passed: `test`", "Review: review 1/3 ✅", "Verification: go test", "**Assumptions**\n- email only"} {
+	for _, want := range []string{"**Delivered:** [PR #1]", "Added login.", "**Assumptions**\n- email only"} {
 		if !strings.Contains(h.lin.comments[0], want) {
 			t.Errorf("Delivered comment missing %q:\n%s", want, h.lin.comments[0])
 		}
 	}
-	ev := strings.Join(h.events.take(), "\n")
-	for _, want := range []string{"checks ✅ 1/1", "squash-merged merge-", "delivered · In Review"} {
-		if !strings.Contains(ev, want) {
-			t.Errorf("events missing %q:\n%s", want, ev)
+	// Reviews, checks and verification are on the PR, not repeated here.
+	for _, not := range []string{"Review", "Checks", "Verification", "Deploy"} {
+		if strings.Contains(h.lin.comments[0], not) {
+			t.Errorf("Delivered comment has %q:\n%s", not, h.lin.comments[0])
 		}
+	}
+	// Telegram gets the outcome only.
+	if ev := h.events.take(); len(ev) != 1 || !strings.Contains(ev[0], "NXT-12 · ✅ delivered · In Review") {
+		t.Errorf("events = %q", ev)
 	}
 }
 
-func TestNoChecksExpected(t *testing.T) {
-	h := newHarness(t, "")
-	os.RemoveAll(filepath.Join(h.upstream, ".github"))
-	gitIn(t, h.upstream, "commit", "--quiet", "-am", "no ci")
-	h.p.Repo.Fetch(h.ctx, "")
+func TestNoChecksAppear(t *testing.T) {
+	h := newHarness(t, "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\nchecks:\n  start_grace: 20ms\n")
 	h.agent.act = commitEach(t)
+	h.prs.checks = func(int, string) []github.Check { return nil }
 	if err := h.pickup(); err != nil {
 		t.Fatal(err)
 	}
-	if r := h.lastRun(); r.Outcome != OutcomeDelivered || h.prs.checkCalls != 0 {
+	// It waits out start_grace, then nothing appearing is a pass.
+	if r := h.lastRun(); r.Outcome != OutcomeDelivered || h.prs.checkCalls < 2 {
 		t.Errorf("run = %+v, %d check calls", r, h.prs.checkCalls)
-	}
-	if !strings.Contains(h.lin.comments[0], "Checks: none expected") {
-		t.Errorf("comment = %s", h.lin.comments[0])
 	}
 }
 
@@ -120,11 +120,8 @@ func TestFailedCheckFixed(t *testing.T) {
 	if !strings.Contains(h.prs.comments[0], "**Check round 1: fixed.**") {
 		t.Errorf("PR comments = %v", h.prs.comments)
 	}
-	ev := strings.Join(h.events.take(), "\n")
-	for _, want := range []string{"checks ❌ test → fixing 1/3", "fixed (check round 1/3)", "re-review after fixes ✅", "checks ✅ 1/1"} {
-		if !strings.Contains(ev, want) {
-			t.Errorf("events missing %q:\n%s", want, ev)
-		}
+	if ev := h.events.take(); len(ev) != 1 || !strings.Contains(ev[0], "delivered") {
+		t.Errorf("events = %q", ev)
 	}
 }
 
@@ -218,9 +215,10 @@ func TestBaseMovedMergesCleanly(t *testing.T) {
 	if r.Outcome != OutcomeDelivered || len(shas) != 2 || h.prs.merged[0].sha != shas[1] || r.CheckRound != 0 {
 		t.Fatalf("run = %+v, checked %v, merged %+v", r, shas, h.prs.merged)
 	}
-	parents := gitIn(t, h.p.Repo.Dir, "log", "-1", "--format=%P %an", shas[1])
-	if len(strings.Fields(parents)) != 3 || !strings.HasSuffix(parents, "goshabot[bot]") {
-		t.Errorf("merge commit = %q", parents)
+	// GitHub merged main into the branch, and Gosha took its merge.
+	parents := gitIn(t, h.p.Repo.Dir, "log", "-1", "--format=%P", shas[1])
+	if len(strings.Fields(parents)) != 2 || h.prs.updates != 1 {
+		t.Errorf("merge commit parents %q, %d updates", parents, h.prs.updates)
 	}
 	if len(h.agent.calls) != 1 || len(h.prs.reviews) != 1 {
 		t.Errorf("%d impl calls, %d reviews: a clean base merge needs neither", len(h.agent.calls), len(h.prs.reviews))
@@ -262,7 +260,7 @@ func TestBaseConflictResolved(t *testing.T) {
 		t.Fatalf("run = %+v, %d impl calls, %d reviews", r, len(h.agent.calls), len(h.prs.reviews))
 	}
 	fix := h.agent.calls[1]
-	if !strings.Contains(fix.Prompt, "# Merge conflicts") || !strings.Contains(fix.Prompt, "- `login.go`") || fix.Resume != "" {
+	if !strings.Contains(fix.Prompt, "# Merge conflicts") || !strings.Contains(fix.Prompt, "git merge origin/main") || fix.Resume != "" {
 		t.Errorf("fix spec: resume %q, prompt %s", fix.Resume, fix.Prompt)
 	}
 	if !strings.Contains(h.prs.comments[0], "merged `main` and resolved the conflicts") {
@@ -284,27 +282,6 @@ func TestMergeRefusedWhenHeadMoved(t *testing.T) {
 	}
 	if !strings.Contains(h.lin.comments[0], "while merging the pull request") {
 		t.Errorf("comment = %s", h.lin.comments[0])
-	}
-}
-
-func TestHumanPRCommentBeforeMerge(t *testing.T) {
-	h := newHarness(t, "")
-	h.agent.act = commitEach(t)
-	h.prs.checks = func(call int, sha string) []github.Check {
-		if len(h.prs.feedback) == 0 {
-			h.prs.feedback = []github.Feedback{{Author: "ann", Kind: github.FeedbackComment, Body: "wait, rename it", At: time.Now()}}
-		}
-		return green(call, sha)
-	}
-	if err := h.pickup(); err != nil {
-		t.Fatal(err)
-	}
-	r := h.lastRun()
-	if r.Outcome != OutcomeDelivered || len(h.agent.calls) != 2 || len(h.prs.reviews) != 2 || !r.PRCursor.Equal(h.prs.feedback[0].At) {
-		t.Fatalf("run = %+v, %d impl calls, %d reviews", r, len(h.agent.calls), len(h.prs.reviews))
-	}
-	if !strings.Contains(h.agent.calls[1].Prompt, "wait, rename it") {
-		t.Error("address pass didn't get the comment")
 	}
 }
 

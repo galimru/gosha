@@ -12,8 +12,17 @@ import (
 
 var envKey = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// Secrets resolves ${VAR} references (DESIGN §5.4): the project's
-// secrets.env first, then the shared secrets.env, then the environment.
+// Secret keys Gosha reads (DESIGN §5.4). Config files never hold secrets.
+const (
+	KeyLinearClientID     = "LINEAR_CLIENT_ID"
+	KeyLinearClientSecret = "LINEAR_CLIENT_SECRET"
+	KeyNotionToken        = "NOTION_TOKEN"
+	KeyClaudeToken        = "CLAUDE_CODE_OAUTH_TOKEN"
+	KeyTelegramToken      = "TELEGRAM_BOT_TOKEN"
+)
+
+// Secrets resolves secret keys (DESIGN §5.4): the project's secrets.env
+// first, then the shared secrets.env, then the environment.
 type Secrets struct {
 	layers []map[string]string
 	env    func(string) (string, bool)
@@ -62,6 +71,44 @@ func (s *Secrets) Lookup(key string) (string, bool) {
 		return v, true
 	}
 	return "", false
+}
+
+// Require returns key's value, or an error saying where to set it.
+func (s *Secrets) Require(key string) (string, error) {
+	if v, ok := s.Lookup(key); ok {
+		return v, nil
+	}
+	return "", fmt.Errorf("%s is not set: add it to secrets.env", key)
+}
+
+// Credentials are the secrets a project's runs need.
+type Credentials struct {
+	LinearClientID     string
+	LinearClientSecret string
+	NotionToken        string
+	ClaudeToken        string
+}
+
+// ProjectCredentials resolves every secret a project needs, failing on
+// the first missing one.
+func (s *Secrets) ProjectCredentials() (Credentials, error) {
+	var c Credentials
+	for _, f := range []struct {
+		key string
+		dst *string
+	}{
+		{KeyLinearClientID, &c.LinearClientID},
+		{KeyLinearClientSecret, &c.LinearClientSecret},
+		{KeyNotionToken, &c.NotionToken},
+		{KeyClaudeToken, &c.ClaudeToken},
+	} {
+		v, err := s.Require(f.key)
+		if err != nil {
+			return Credentials{}, err
+		}
+		*f.dst = v
+	}
+	return c, nil
 }
 
 // ReadEnvFile parses KEY=value lines. Blank lines and lines starting with

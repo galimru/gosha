@@ -59,11 +59,8 @@ func (f *fakeLinear) state() string {
 
 type fakePRs struct {
 	prs      map[int]*github.PR
-	closed   []int
 	reviews  []postedReview
 	comments []string
-	// feedback is human PR feedback; HumanFeedback returns what's after since.
-	feedback []github.Feedback
 	// checks returns the checks on a head for each call. Without it, Gosha
 	// is stopped while it waits for checks, as by a shutdown, so the run
 	// stays open at StepChecks.
@@ -79,8 +76,41 @@ type fakePRs struct {
 	deploys     func(call int, sha string) *github.WorkflowRun
 	deployCalls int
 	jobs        []github.Job
-	// titles and bodies of the PRs opened.
+	// titles and bodies of the PRs opened, and each PR's branch.
 	titles, bodies []string
+	branches       map[int]string
+	// upstream is the repo PRs are on; UpdateBranch merges main into a PR's
+	// branch there, as GitHub would.
+	upstream string
+	updates  int
+}
+
+func (f *fakePRs) UpdateBranch(_ context.Context, n int, head string) error {
+	f.updates++
+	branch := "refs/heads/" + f.branches[n]
+	git := func(args ...string) (string, error) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = f.upstream
+		cmd.Env = append(gitx.Env(""), "GIT_AUTHOR_NAME=gh", "GIT_AUTHOR_EMAIL=g@h", "GIT_COMMITTER_NAME=gh", "GIT_COMMITTER_EMAIL=g@h")
+		out, err := cmd.Output()
+		return strings.TrimSpace(string(out)), err
+	}
+	if cur, err := git("rev-parse", branch); err != nil || cur != head {
+		return github.ErrHeadMoved
+	}
+	tree, err := git("merge-tree", "--write-tree", branch, "refs/heads/main")
+	if err != nil {
+		return github.ErrConflict
+	}
+	commit, err := git("commit-tree", tree, "-p", branch, "-p", "refs/heads/main", "-m", "Merge main")
+	if err != nil {
+		return err
+	}
+	if _, err := git("update-ref", branch, commit); err != nil {
+		return err
+	}
+	f.prs[n].HeadSHA = commit
+	return nil
 }
 
 func (f *fakePRs) DeployRun(_ context.Context, _, sha, _ string) (*github.WorkflowRun, error) {
@@ -141,16 +171,6 @@ func (f *fakePRs) CreateComment(_ context.Context, _ int, body string) error {
 	return nil
 }
 
-func (f *fakePRs) HumanFeedback(_ context.Context, _ int, since time.Time) ([]github.Feedback, error) {
-	var out []github.Feedback
-	for _, fb := range f.feedback {
-		if fb.At.After(since) {
-			out = append(out, fb)
-		}
-	}
-	return out, nil
-}
-
 func (f *fakePRs) Token(context.Context) (string, error) { return "", nil }
 
 func (f *fakePRs) PR(_ context.Context, n int) (*github.PR, error) {
@@ -163,15 +183,10 @@ func (f *fakePRs) PR(_ context.Context, n int) (*github.PR, error) {
 func (f *fakePRs) CreatePR(_ context.Context, branch, base, title, body string) (*github.PR, error) {
 	f.titles, f.bodies = append(f.titles, title), append(f.bodies, body)
 	n := len(f.prs) + 1
+	f.branches[n] = branch
 	p := &github.PR{Number: n, URL: fmt.Sprintf("https://github.com/o/r/pull/%d", n), State: "open"}
 	f.prs[n] = p
 	return p, nil
-}
-
-func (f *fakePRs) ClosePR(_ context.Context, n int) error {
-	f.prs[n].State = "closed"
-	f.closed = append(f.closed, n)
-	return nil
 }
 
 // fakeAgent stands in for the implementer and the reviewer.
@@ -264,9 +279,6 @@ func newHarness(t *testing.T, cfg string) *harness {
 	if cfg == "" {
 		cfg = "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\n"
 	}
-	// CI runs on pull requests, so a PR is expected to get checks.
-	os.MkdirAll(filepath.Join(up.dir, ".github", "workflows"), 0o755)
-	os.WriteFile(filepath.Join(up.dir, ".github", "workflows", "ci.yml"), []byte("on: [pull_request]\n"), 0o644)
 	up.commit(cfg)
 	checkPoll, checkSettle = time.Millisecond, time.Millisecond
 
@@ -281,14 +293,13 @@ func newHarness(t *testing.T, cfg string) *harness {
 	}
 	t.Cleanup(func() { st.Close() })
 	commit, _ := repo.RevParse(ctx, "origin/main")
-	pc, _, err := config.ParseProject([]byte(cfg), commit, config.NewSecrets(nil, nil, map[string]string{
-		"LINEAR_CLIENT_ID": "a", "LINEAR_CLIENT_SECRET": "b", "NOTION_TOKEN": "c"}))
+	pc, err := config.ParseProject([]byte(cfg), commit)
 	if err != nil {
 		t.Fatal(err)
 	}
 	h := &harness{
 		t: t, ctx: ctx, upstream: up.dir,
-		lin: &fakeLinear{}, prs: &fakePRs{prs: map[int]*github.PR{}}, events: &recorder{},
+		lin: &fakeLinear{}, prs: &fakePRs{prs: map[int]*github.PR{}, branches: map[int]string{}, upstream: up.dir}, events: &recorder{},
 		p:     &Project{Name: "demo", Config: pc, Repo: repo, Base: "main", Commit: commit},
 		issue: linear.Issue{ID: "i-12", Identifier: "NXT-12", Number: 12, Title: "Add login", URL: "https://linear.app/x/NXT-12"},
 	}
@@ -363,17 +374,17 @@ func TestTicketToPR(t *testing.T) {
 		t.Error("branch not pushed")
 	}
 	s := h.agent.calls[0]
-	if s.Resume != "" || s.Dir != filepath.Join(h.env.Home.Project("demo").Worktrees(), "NXT-12") ||
+	if s.Resume != "" || s.Dir != h.env.Home.Workspace("demo", "NXT-12").Checkout() ||
 		!strings.Contains(s.Prompt, "# NXT-12: Add login") || s.Git.Name != "goshabot[bot]" {
 		t.Errorf("spec = %+v", s)
 	}
 	if _, err := os.Stat(s.SettingsFile); err != nil {
 		t.Errorf("settings: %v", err)
 	}
-	// The reviewer ran without edit tools in its own throwaway clone.
+	// The reviewer ran without edit tools in its own clone.
 	rs := h.agent.reviews[0]
 	if !slices.Equal(rs.DisallowedTools, agent.ReviewerDisallowed) || rs.Resume != "" ||
-		rs.Dir != s.Dir+"-review" || !strings.Contains(rs.Prompt, "+login.go") || !strings.Contains(rs.Transcript, "2-review.jsonl") {
+		rs.Dir != h.env.Home.Workspace("demo", "NXT-12").Review() || !strings.Contains(rs.Prompt, "git diff origin/main...HEAD") || !strings.Contains(rs.Transcript, "2-review.jsonl") {
 		t.Errorf("reviewer spec = %+v", rs)
 	}
 	if _, err := os.Stat(rs.Dir); !os.IsNotExist(err) {
@@ -384,11 +395,9 @@ func TestTicketToPR(t *testing.T) {
 		h.prs.reviews[0].comments[0].Body != "**nit:** name" {
 		t.Errorf("reviews = %+v", h.prs.reviews)
 	}
-	ev := strings.Join(h.events.take(), "\n")
-	for _, want := range []string{"picked up (fresh)", "implemented · +1 −0 in 1 files", "PR #1 opened", "review 1/3 ✅ · 0 must, 0 should, 1 nit"} {
-		if !strings.Contains(ev, want) {
-			t.Errorf("events missing %q:\n%s", want, ev)
-		}
+	// Progress isn't an alert: Telegram stays quiet until the outcome.
+	if ev := h.events.take(); len(ev) != 0 {
+		t.Errorf("events = %q", ev)
 	}
 }
 
@@ -493,20 +502,18 @@ func TestFollowUpAfterMerge(t *testing.T) {
 	}
 }
 
-func TestRestart(t *testing.T) {
+func TestClosedPRRestarts(t *testing.T) {
 	h := newHarness(t, "")
 	h.agent.act = func(call int, dir string) string { commitFile(t, dir, fmt.Sprintf("f%d.go", call)); return doneResult }
 	h.pickup()
 	first := h.run()
-	if err := h.pickup(linear.Comment{ID: "c1", Body: "/restart", Human: true, CreatedAt: time.Now()}); err != nil {
+	h.prs.prs[first.PRNumber].State = "closed"
+	if err := h.pickup(); err != nil {
 		t.Fatal(err)
 	}
 	r := h.run()
 	if r.ID == first.ID || r.Mode != ModeRestart || r.Branch != first.Branch || r.Step != StepChecks {
 		t.Errorf("restarted run = %+v", r)
-	}
-	if len(h.prs.closed) != 1 || h.prs.closed[0] != first.PRNumber {
-		t.Errorf("closed = %v", h.prs.closed)
 	}
 	// The new branch has only the new work.
 	if _, err := os.Stat(filepath.Join(h.agent.calls[1].Dir, "f1.go")); err == nil {
@@ -537,18 +544,6 @@ func TestUsageLimitLeavesTicketInProgress(t *testing.T) {
 	}
 	if r := h.run(); r.Step != StepImplement || h.lin.state() != states.InProgress.ID || len(h.lin.comments) != 0 {
 		t.Errorf("run %+v, linear %+v", r, h.lin)
-	}
-}
-
-func TestSetupFailureBlocks(t *testing.T) {
-	h := newHarness(t, "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\nagent:\n  setup: [\"echo installing\", \"echo broken >&2; exit 2\"]\n")
-	h.agent.act = func(int, string) string { t.Error("agent ran after a failed setup"); return doneResult }
-	if err := h.pickup(); err != nil {
-		t.Fatal(err)
-	}
-	r := h.run()
-	if r.Step != StepBlocked || !strings.Contains(r.BlockedReason, "exit 2") || !strings.Contains(r.BlockedReason, "broken") {
-		t.Errorf("run = %+v", r)
 	}
 }
 

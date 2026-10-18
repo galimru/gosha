@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/galimru/gosha/internal/agent"
+	"github.com/galimru/gosha/internal/config"
 	"github.com/galimru/gosha/internal/github"
 	"github.com/galimru/gosha/internal/gitx"
 	"github.com/galimru/gosha/internal/linear"
@@ -64,13 +64,12 @@ type prOps interface {
 	Token(ctx context.Context) (string, error)
 	PR(ctx context.Context, number int) (*github.PR, error)
 	CreatePR(ctx context.Context, branch, base, title, body string) (*github.PR, error)
-	ClosePR(ctx context.Context, number int) error
 	CreateReview(ctx context.Context, number int, sha, body string, comments []github.ReviewComment) (int64, error)
 	CreateComment(ctx context.Context, number int, body string) error
-	HumanFeedback(ctx context.Context, number int, since time.Time) ([]github.Feedback, error)
 	Checks(ctx context.Context, sha string) ([]github.Check, error)
 	JobLog(ctx context.Context, jobID int64) (string, error)
 	Merge(ctx context.Context, number int, sha, method, title, message string) (string, error)
+	UpdateBranch(ctx context.Context, number int, head string) error
 	DeployRun(ctx context.Context, workflow, sha, branch string) (*github.WorkflowRun, error)
 	RunJobs(ctx context.Context, runID int64) ([]github.Job, error)
 }
@@ -105,7 +104,7 @@ type ticket struct {
 	// resuming is set when the pickup continues an open run.
 	resuming bool
 	// budget is what's left of agent.timeout in this pickup. Agent passes
-	// and agent.setup spend it; waiting for CI doesn't.
+	// spend it; waiting for CI doesn't.
 	budget time.Duration
 	// actx is the current agent pass's context, bounded by the budget.
 	actx context.Context
@@ -114,7 +113,7 @@ type ticket struct {
 	recheck bool
 }
 
-// agentPass starts an agent pass (or agent.setup) bounded by what's left of
+// agentPass starts an agent pass bounded by what's left of
 // the budget, in t.actx. end charges the time it took.
 func (t *ticket) agentPass(ctx context.Context) (end func()) {
 	start := time.Now()
@@ -134,21 +133,10 @@ func (e *Env) Pass(ctx context.Context, name, only string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	for _, w := range p.Warnings {
-		e.Log.Warn("config warning", "project", name, "warning", w)
-	}
 	lin, err := e.ConnectLinear(ctx, p)
 	if err != nil {
 		return false, err
 	}
-	refreshed := false
-	if e.contextDue(ctx, p) {
-		if err := e.refreshContext(ctx, p); err != nil {
-			return false, err
-		}
-		refreshed = true
-	}
-	e.resume(ctx, p)
 	c, err := e.interrupted(ctx, name, lin, only)
 	if err != nil {
 		return false, err
@@ -167,14 +155,17 @@ func (e *Env) Pass(ctx context.Context, name, only string) (bool, error) {
 		}
 	}
 	if c == nil {
+		// A Notion pause waits for the next pickup's refresh.
+		if !e.pausedForNotion(ctx, p) {
+			e.resume(ctx, p)
+		}
 		return false, nil
 	}
 	// A pickup always starts from the latest context.
-	if !refreshed {
-		if err := e.refreshContext(ctx, p); err != nil {
-			return false, err
-		}
+	if err := e.refreshContext(ctx, p); err != nil {
+		return false, err
 	}
+	e.resume(ctx, p)
 	kb, err := e.freezeContext(p, c.Issue.Identifier)
 	if err != nil {
 		return false, err
@@ -280,8 +271,6 @@ func (t *ticket) claim(ctx context.Context, all []linear.Comment) error {
 	}
 	mode := ModeFresh
 	switch {
-	case HasRestart(t.comments):
-		mode = ModeRestart
 	case t.run != nil:
 		mode = ModeResume
 	case t.prev != nil:
@@ -294,11 +283,10 @@ func (t *ticket) claim(ctx context.Context, all []linear.Comment) error {
 		}
 	} else {
 		// A follow-up stays one when it resumes, so it keeps its prompt.
-		if t.run.Mode != ModeFollowUp || mode == ModeRestart {
+		if t.run.Mode != ModeFollowUp {
 			t.run.Mode = mode
 		}
-		// A restart never continues the old session.
-		t.resuming = mode != ModeRestart
+		t.resuming = true
 		if err := t.save(ctx, t.run.Step); err != nil {
 			return err
 		}
@@ -308,7 +296,6 @@ func (t *ticket) claim(ctx context.Context, all []linear.Comment) error {
 		t.cursor = &store.Cursor{CommentID: last.ID, At: last.CreatedAt}
 	}
 	t.e.Log.Info("picked up", "project", t.p.Name, "ticket", t.issue.Identifier, "mode", mode)
-	t.notify(fmt.Sprintf("%s %s · picked up (%s)", t.issue.Identifier, t.issue.Title, mode), t.ticketLink())
 	return nil
 }
 
@@ -316,36 +303,14 @@ func (t *ticket) claim(ctx context.Context, all []linear.Comment) error {
 // implements, pushes and opens the PR.
 func (t *ticket) drive(ctx context.Context) error {
 	reuse := ""
-	switch {
-	case HasRestart(t.comments):
-		if t.run.Branch != "" {
-			reuse = t.run.Branch
-			if err := t.restart(ctx, t.run); err != nil {
-				return err
-			}
-			if err := t.newRun(ctx, ModeRestart); err != nil {
-				return err
-			}
-		}
-	case t.run.PRNumber != 0:
+	if t.run.PRNumber != 0 {
 		pr, err := t.prs.PR(ctx, t.run.PRNumber)
 		if err != nil {
 			return err
 		}
 		switch {
-		case pr.Merged && t.run.MergeSHA != "" && t.fromReady && len(instructions(t.comments)) > 0:
-			// Blocked after the merge (its deploy failed), and a human asked
-			// for a change: that's a follow-up on the merged code.
-			if err := t.e.Store.FinishRun(ctx, t.run.ID, OutcomeDelivered); err != nil {
-				return err
-			}
-			t.prev = t.run
-			if err := t.newRun(ctx, ModeFollowUp); err != nil {
-				return err
-			}
 		case pr.Merged && t.run.MergeSHA != "":
-			// Gosha merged it and stopped before delivering, or its deploy
-			// is to be checked again.
+			// Gosha merged it and stopped before delivering.
 			return t.afterMerge(ctx)
 		case pr.Merged:
 			if err := t.e.Store.FinishRun(ctx, t.run.ID, OutcomeMerged); err != nil {
@@ -392,19 +357,9 @@ func (t *ticket) newRun(ctx context.Context, mode string) error {
 	return t.e.Store.CreateRun(ctx, t.run)
 }
 
-// restart closes the run's PR, deletes its branch and checkout and ends it.
+// restart ends a run whose PR was closed without merging, deleting its
+// branch and checkout.
 func (t *ticket) restart(ctx context.Context, r *store.Run) error {
-	if r.PRNumber != 0 {
-		pr, err := t.prs.PR(ctx, r.PRNumber)
-		if err != nil {
-			return err
-		}
-		if pr.State == "open" {
-			if err := t.prs.ClosePR(ctx, r.PRNumber); err != nil {
-				return err
-			}
-		}
-	}
 	tok, err := t.prs.Token(ctx)
 	if err != nil {
 		return err
@@ -418,7 +373,7 @@ func (t *ticket) restart(ctx context.Context, r *store.Run) error {
 	return t.e.Store.FinishRun(ctx, r.ID, OutcomeRestarted)
 }
 
-// chooseBranch renders the branch pattern and adds -2, -3, … while the
+// chooseBranch takes the ticket's branch name and adds -2, -3, … while the
 // name is taken, on GitHub or by an earlier run: Gosha never takes over a
 // branch it doesn't own (DESIGN §8.2). reuse is a name this run may take
 // back because it just deleted it.
@@ -426,10 +381,7 @@ func (t *ticket) chooseBranch(ctx context.Context, reuse string) (string, error)
 	if reuse != "" {
 		return reuse, nil
 	}
-	name, err := t.p.Config.BranchName(Ticket(t.issue, nil))
-	if err != nil {
-		return "", err
-	}
+	name := branchName(t.issue)
 	owned, err := t.e.Store.Branches(ctx, t.p.Name)
 	if err != nil {
 		return "", err
@@ -456,9 +408,12 @@ func (t *ticket) chooseBranch(ctx context.Context, reuse string) (string, error)
 	}
 }
 
-func (t *ticket) checkout() string {
-	return filepath.Join(t.e.Home.Project(t.p.Name).Worktrees(), t.issue.Identifier)
+// workspace is the ticket's agent workspace (DESIGN §11.3).
+func (t *ticket) workspace() config.Workspace {
+	return t.e.Home.Workspace(t.p.Name, t.issue.Identifier)
 }
+
+func (t *ticket) checkout() string { return t.workspace().Checkout() }
 
 func (t *ticket) save(ctx context.Context, step string) error {
 	t.run.Step = step
@@ -513,13 +468,12 @@ func (t *ticket) implement(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	t.notify(fmt.Sprintf("%s · implemented · %s · %s\n%s", t.issue.Identifier, diff, time.Since(t.started).Round(time.Minute), res.Summary))
+	t.e.Log.Info("implemented", "project", t.p.Name, "ticket", t.issue.Identifier, "diff", diff.String(), "took", time.Since(t.started).Round(time.Minute))
 	return t.publish(ctx, res, diff)
 }
 
 // prepare makes checkout ready for an agent pass: it clones it if needed,
-// numbers the pass, lays out its files and runs agent.setup in a fresh
-// clone. A failed setup sends the ticket Blocked.
+// numbers the pass and lays out its files.
 func (t *ticket) prepare(ctx context.Context, checkout, role string) (fresh bool, rp runPaths, err error) {
 	fresh, err = t.p.Repo.CloneCheckout(ctx, checkout, t.run.BaseBranch, t.run.Branch)
 	if err != nil {
@@ -529,31 +483,22 @@ func (t *ticket) prepare(ctx context.Context, checkout, role string) (fresh bool
 	if err := t.save(ctx, t.run.Step); err != nil {
 		return false, rp, err
 	}
-	if rp, err = t.runPaths(t.run.AgentRuns, role, checkout); err != nil {
+	if rp, err = t.runPaths(t.run.AgentRuns, role); err != nil {
 		return false, rp, err
-	}
-	if fresh && len(t.p.Config.Agent.Setup) > 0 {
-		end := t.agentPass(ctx)
-		defer end()
-		if err := t.setup(t.actx, checkout, rp); err != nil {
-			if errors.Is(context.Cause(t.actx), errAgentTimeout) {
-				return false, rp, t.block(ctx, fmt.Sprintf("`agent.setup` ran out of time (agent.timeout %v).", t.p.Config.Agent.Timeout), nil)
-			}
-			if ctx.Err() != nil {
-				return false, rp, err
-			}
-			return false, rp, t.block(ctx, err.Error(), nil)
-		}
 	}
 	return fresh, rp, nil
 }
 
 func (t *ticket) spec(prompt, dir string, rp runPaths) agent.Spec {
 	cfg := t.p.Config.Agent
+	mode := agent.ModeDontAsk
+	if !t.e.Global.Agent.SandboxEnabled() {
+		mode = agent.ModeAuto
+	}
 	return agent.Spec{
 		Binary: t.e.ClaudeBinary, Prompt: prompt, Dir: dir, SettingsFile: rp.settings, Transcript: rp.transcript,
-		Mode: cfg.PermissionMode, Model: cfg.Model,
-		OAuthToken: t.e.Global.Claude.OAuthToken, ConfigDir: t.e.Home.Project(t.p.Name).Claude(), TmpDir: rp.agent.RunDir,
+		Mode: mode, Model: cfg.Model,
+		OAuthToken: t.p.Creds.ClaudeToken, ConfigDir: t.e.Home.Project(t.p.Name).Claude(), TmpDir: rp.agent.RunDir,
 		Git: t.bot, Redact: t.e.Redactor.Redact, AddDirs: nonEmpty(t.kb.Dir),
 	}
 }
@@ -621,7 +566,7 @@ func (t *ticket) collect(ctx context.Context, checkout string) (bool, error) {
 		return true, nil
 	}
 	if errors.Is(err, gitx.ErrNotCheckout) {
-		return false, t.block(ctx, "The ticket checkout is damaged (its .git isn't a directory). Comment `/restart` and move the ticket to Ready to start over.", nil)
+		return false, t.block(ctx, "The ticket checkout is damaged (its .git isn't a directory). Close the pull request and move the ticket to Ready to start over.", nil)
 	}
 	var gerr *gitx.Error
 	if errors.As(err, &gerr) && strings.Contains(gerr.Stderr, "couldn't find remote ref") {
@@ -695,7 +640,6 @@ func (t *ticket) publish(ctx context.Context, res *agent.ImplementerResult, diff
 		return err
 	}
 	t.e.Log.Info("PR opened", "project", t.p.Name, "ticket", t.issue.Identifier, "pr", pr.URL)
-	t.notify(fmt.Sprintf("%s · PR #%d opened", t.issue.Identifier, pr.Number), t.prLink(), t.ticketLink())
 	return t.reviewLoop(ctx, false)
 }
 
@@ -745,12 +689,10 @@ type runPaths struct {
 	agent      agent.Paths
 	settings   string
 	transcript string
-	setupLog   string
 }
 
-func (t *ticket) runPaths(n int, role, checkout string) (runPaths, error) {
-	// The sandbox matches real paths, so resolve symlinks in the home.
-	home, err := filepath.EvalSymlinks(t.e.Home.Dir())
+func (t *ticket) runPaths(n int, role string) (runPaths, error) {
+	home, err := t.e.realHome()
 	if err != nil {
 		return runPaths{}, err
 	}
@@ -758,19 +700,24 @@ func (t *ticket) runPaths(n int, role, checkout string) (runPaths, error) {
 	if err != nil {
 		return runPaths{}, err
 	}
-	pp := filepath.Join(home, "projects", t.p.Name)
-	runs := filepath.Join(pp, "runs", t.issue.Identifier)
+	ws := home.Workspace(t.p.Name, t.issue.Identifier)
+	checkout := ws.Checkout()
+	if role == agent.RoleReviewer {
+		checkout = ws.Review()
+	}
+	runs := filepath.Join(home.Project(t.p.Name).Runs(), t.issue.Identifier)
 	rp := runPaths{
 		agent: agent.Paths{
-			Home: home, Checkout: filepath.Join(pp, "worktrees", filepath.Base(checkout)),
-			RunDir: filepath.Join(runs, fmt.Sprint(n)), Context: t.kb.Dir, UserHome: userHome, Writable: t.e.Global.Agent.Writable,
+			Home: home.Dir(), Workspace: ws.Dir, Checkout: checkout, RunDir: ws.Tmp(n),
+			Context: t.kb.Dir, UserHome: userHome, Writable: t.e.Global.Agent.Writable,
 		},
 		settings:   filepath.Join(runs, fmt.Sprintf("%d-settings.json", n)),
 		transcript: filepath.Join(runs, fmt.Sprintf("%d-%s.jsonl", n, role)),
-		setupLog:   filepath.Join(runs, fmt.Sprintf("%d-setup.log", n)),
 	}
-	if err := os.MkdirAll(t.e.Home.Project(t.p.Name).Claude(), 0o700); err != nil {
-		return runPaths{}, err
+	for _, d := range []string{runs, t.e.Home.Project(t.p.Name).Claude()} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			return runPaths{}, err
+		}
 	}
 	if err := rp.agent.EnsureDirs(); err != nil {
 		return runPaths{}, err
@@ -780,49 +727,6 @@ func (t *ticket) runPaths(n int, role, checkout string) (runPaths, error) {
 		return runPaths{}, err
 	}
 	return rp, os.WriteFile(rp.settings, data, 0o600)
-}
-
-// setup runs agent.setup in a fresh checkout. It runs outside the agent
-// sandbox, with the agent's scrubbed environment (DESIGN §12).
-func (t *ticket) setup(ctx context.Context, dir string, rp runPaths) error {
-	log, err := os.OpenFile(rp.setupLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer log.Close()
-	for _, c := range t.p.Config.Agent.Setup {
-		fmt.Fprintf(log, "$ %s\n", c)
-		cmd := exec.CommandContext(ctx, "sh", "-c", c)
-		cmd.Dir = dir
-		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "TMPDIR=" + rp.agent.RunDir}
-		var tail tailWriter
-		cmd.Stdout, cmd.Stderr = &tail, &tail
-		err := cmd.Run()
-		log.WriteString(t.e.Redactor.Redact(string(tail.buf)))
-		if err != nil {
-			return fmt.Errorf("`agent.setup` command `%s` failed: %v\n\n```\n%s\n```", c, err, strings.TrimSpace(lastLines(string(tail.buf), 20)))
-		}
-	}
-	return nil
-}
-
-// tailWriter keeps the last 64 KiB of output.
-type tailWriter struct{ buf []byte }
-
-func (w *tailWriter) Write(p []byte) (int, error) {
-	w.buf = append(w.buf, p...)
-	if over := len(w.buf) - 64<<10; over > 0 {
-		w.buf = w.buf[over:]
-	}
-	return len(p), nil
-}
-
-func lastLines(s string, n int) string {
-	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return strings.Join(lines, "\n")
 }
 
 func (t *ticket) ticketLink() notify.Link {

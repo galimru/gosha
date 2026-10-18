@@ -12,8 +12,10 @@ type Global struct {
 	Concurrency int         `yaml:"concurrency"`
 	Agent       GlobalAgent `yaml:"agent"`
 	GitHubApp   GitHubApp   `yaml:"github_app"`
-	Claude      Claude      `yaml:"claude"`
 	Telegram    Telegram    `yaml:"telegram"`
+	// HeartbeatURL is GET-pinged after every poll, so an outside monitor
+	// notices when Gosha stops (DESIGN §9). Optional.
+	HeartbeatURL string `yaml:"heartbeat_url"`
 }
 
 type GlobalAgent struct {
@@ -29,12 +31,7 @@ type GitHubApp struct {
 	PrivateKeyFile string `yaml:"private_key_file" default:"github-app.pem"`
 }
 
-type Claude struct {
-	OAuthToken string `yaml:"oauth_token" secret:"true" default:"${CLAUDE_CODE_OAUTH_TOKEN}"`
-}
-
 type Telegram struct {
-	BotToken string  `yaml:"bot_token" secret:"true" default:"${TELEGRAM_BOT_TOKEN}"`
 	ChatID   int64   `yaml:"chat_id"`
 	DigestAt *string `yaml:"digest_at"`
 }
@@ -48,18 +45,18 @@ func (t Telegram) Digest() string {
 }
 
 // LoadGlobal reads and validates the global config.
-func LoadGlobal(h Home, s *Secrets) (*Global, error) {
+func LoadGlobal(h Home) (*Global, error) {
 	data, err := os.ReadFile(h.Config())
 	if err != nil {
 		return nil, fmt.Errorf("global config: %w", err)
 	}
-	return ParseGlobal(h, h.Config(), data, s)
+	return ParseGlobal(h, h.Config(), data)
 }
 
 // ParseGlobal decodes and validates global config data.
-func ParseGlobal(h Home, file string, data []byte, s *Secrets) (*Global, error) {
+func ParseGlobal(h Home, file string, data []byte) (*Global, error) {
 	g := &Global{}
-	if err := decode(file, data, s, g); err != nil {
+	if err := decode(file, data, g); err != nil {
 		return nil, err
 	}
 	if g.Concurrency == 0 {

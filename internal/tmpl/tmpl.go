@@ -1,5 +1,5 @@
-// Package tmpl holds the template data model and functions shared by every
-// Gosha template: prompts and the branch name pattern (DESIGN §5.3).
+// Package tmpl holds the data model and functions of the agent prompts
+// (DESIGN §5.3).
 package tmpl
 
 import (
@@ -17,7 +17,6 @@ type Data struct {
 	Context    Context
 	Branch     string
 	BaseBranch string
-	Diff       string
 	Feedback   Feedback
 	FollowUp   FollowUp
 	Round      int
@@ -26,8 +25,6 @@ type Data struct {
 
 type Ticket struct {
 	ID          string
-	Team        string
-	Number      int
 	Title       string
 	Description string
 	URL         string
@@ -45,12 +42,13 @@ type Context struct {
 }
 
 type Feedback struct {
-	// Review is the reviewer's comments and human PR feedback (address).
+	// Review is the reviewer's comments (address).
 	Review string
 	// CI is the failed checks with the failing part of their logs (address).
 	CI string
-	// Conflicts lists the files that conflict with the base (address).
-	Conflicts string
+	// Conflicts is set when the base doesn't merge cleanly into the branch
+	// (address).
+	Conflicts bool
 	// Previous is the last round's review and the implementer's reply
 	// (review, from round 2).
 	Previous string

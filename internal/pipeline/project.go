@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sync"
 
 	"github.com/galimru/gosha/internal/agent"
@@ -54,16 +55,23 @@ func (e *Env) review(ctx context.Context, s agent.Spec, resultFile string) (*age
 	return agent.Review(ctx, s, resultFile)
 }
 
+// realHome is the home with symlinks resolved: the sandbox matches real
+// paths.
+func (e *Env) realHome() (config.Home, error) {
+	home, err := filepath.EvalSymlinks(e.Home.Dir())
+	return config.Home(home), err
+}
+
 // Project is a project with its config freshly loaded from the default branch.
 type Project struct {
-	Name     string
-	Config   *config.Project
-	Warnings []string
-	Repo     *gitx.Repo
-	GitHub   gitx.GitHubRepo
-	Install  *github.Installation
-	Base     string // default branch
-	Commit   string // origin/<base> the config was read from
+	Name    string
+	Config  *config.Project
+	Creds   config.Credentials
+	Repo    *gitx.Repo
+	GitHub  gitx.GitHubRepo
+	Install *github.Installation
+	Base    string // default branch
+	Commit  string // origin/<base> the config was read from
 }
 
 // PausedError means the project is paused because of its config: no
@@ -119,44 +127,40 @@ func (e *Env) readConfig(ctx context.Context, p *Project) error {
 	if p.Commit, err = p.Repo.RevParse(ctx, "origin/"+p.Base); err != nil {
 		return fmt.Errorf("%s: %w", p.Name, err)
 	}
-	cfg, warns, err := e.parseConfig(ctx, p)
+	cfg, err := e.parseConfig(ctx, p)
 	if err != nil {
 		return e.pause(ctx, p, err)
 	}
-	if wf := cfg.Deploy.Workflow; wf != "" {
-		if _, err := p.Repo.Show(ctx, p.Commit, ".github/workflows/"+wf); errors.Is(err, gitx.ErrNotFound) {
-			warns = append(warns, fmt.Sprintf("deploy.workflow: .github/workflows/%s isn't on the default branch, so no deploy will be found", wf))
-		} else if err != nil {
-			return fmt.Errorf("%s: %w", p.Name, err)
-		}
+	secrets, err := config.LoadSecrets(e.Home, p.Name, e.Redactor)
+	if err != nil {
+		return e.pause(ctx, p, err)
 	}
-	p.Config, p.Warnings = cfg, warns
+	if p.Creds, err = secrets.ProjectCredentials(); err != nil {
+		return e.pause(ctx, p, err)
+	}
+	p.Config = cfg
 	if cfg.GitHub.DefaultBranch != "" {
 		p.Base = cfg.GitHub.DefaultBranch
 	}
 	return nil
 }
 
-func (e *Env) parseConfig(ctx context.Context, p *Project) (*config.Project, []string, error) {
+func (e *Env) parseConfig(ctx context.Context, p *Project) (*config.Project, error) {
 	data, err := p.Repo.Show(ctx, p.Commit, config.ProjectFile)
 	if errors.Is(err, gitx.ErrNotFound) {
-		return nil, nil, fmt.Errorf("%s is missing on %s", config.ProjectFile, p.Base)
+		return nil, fmt.Errorf("%s is missing on %s", config.ProjectFile, p.Base)
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	secrets, err := config.LoadSecrets(e.Home, p.Name, e.Redactor)
+	cfg, err := config.ParseProject(data, p.Commit)
 	if err != nil {
-		return nil, nil, err
-	}
-	cfg, warns, err := config.ParseProject(data, p.Commit, secrets)
-	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if cfg.Name != p.Name {
-		return nil, nil, fmt.Errorf("%s says name %q but the project is registered as %q", config.ProjectFile, cfg.Name, p.Name)
+		return nil, fmt.Errorf("%s says name %q but the project is registered as %q", config.ProjectFile, cfg.Name, p.Name)
 	}
-	return cfg, warns, nil
+	return cfg, nil
 }
 
 // Linear is a project's Linear access with its team and states resolved.
@@ -169,7 +173,7 @@ type Linear struct {
 // ConnectLinear checks the project's team and states. A missing team or
 // state pauses the project, since Gosha can't run it (DESIGN §3).
 func (e *Env) ConnectLinear(ctx context.Context, p *Project) (*Linear, error) {
-	c := linear.New(p.Config.Linear.ClientID, p.Config.Linear.ClientSecret)
+	c := linear.New(p.Creds.LinearClientID, p.Creds.LinearClientSecret)
 	team, err := c.Team(ctx, p.Config.Linear.Team)
 	if errors.Is(err, linear.ErrTeamNotFound) {
 		return nil, e.pause(ctx, p, err)
@@ -185,9 +189,19 @@ func (e *Env) ConnectLinear(ctx context.Context, p *Project) (*Linear, error) {
 }
 
 func (e *Env) pause(ctx context.Context, p *Project, cause error) error {
+	return e.setPaused(ctx, p, cause, false)
+}
+
+// pauseNotion pauses the project over Notion access. Only a pickup's
+// context refresh can clear it (DESIGN §6.2).
+func (e *Env) pauseNotion(ctx context.Context, p *Project, cause error) error {
+	return e.setPaused(ctx, p, cause, true)
+}
+
+func (e *Env) setPaused(ctx context.Context, p *Project, cause error, notion bool) error {
 	reason := e.Redactor.Redact(cause.Error())
 	changed, err := e.Store.SetProjectState(ctx, store.ProjectState{
-		Project: p.Name, Status: store.StatusPaused, Reason: reason, Commit: p.Commit,
+		Project: p.Name, Status: store.StatusPaused, Reason: reason, Notion: notion, Commit: p.Commit,
 	})
 	if err != nil {
 		e.Log.Error("record project state", "project", p.Name, "err", err)
@@ -197,6 +211,12 @@ func (e *Env) pause(ctx context.Context, p *Project, cause error) error {
 		e.Notify.Send(notify.Event{Project: p.Name, Text: fmt.Sprintf("paused at %.7s: %s", p.Commit, reason)})
 	}
 	return &PausedError{Project: p.Name, Commit: p.Commit, Err: cause}
+}
+
+// pausedForNotion reports whether the project is paused over Notion access.
+func (e *Env) pausedForNotion(ctx context.Context, p *Project) bool {
+	ps, _ := e.Store.ProjectState(ctx, p.Name)
+	return ps != nil && ps.Status == store.StatusPaused && ps.Notion
 }
 
 // resume marks the project active once its config, Linear and Notion

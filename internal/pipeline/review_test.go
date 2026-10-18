@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/galimru/gosha/internal/agent"
-	"github.com/galimru/gosha/internal/github"
 	"github.com/galimru/gosha/internal/linear"
 )
 
@@ -54,12 +53,6 @@ func TestReviewFixRound(t *testing.T) {
 			t.Errorf("second review prompt missing %q", want)
 		}
 	}
-	ev := strings.Join(h.events.take(), "\n")
-	for _, want := range []string{"review 1/3 ❌ · 1 must", "addressed 1 comments (round 1) · PR now +2 −0 in 2 files", "review 2/3 ✅"} {
-		if !strings.Contains(ev, want) {
-			t.Errorf("events missing %q:\n%s", want, ev)
-		}
-	}
 }
 
 func TestReviewRoundsExhausted(t *testing.T) {
@@ -90,25 +83,6 @@ func TestReviewRoundsExhausted(t *testing.T) {
 	}
 	if r := h.run(); r.Step != StepChecks || r.ReviewRound != 1 || len(h.agent.calls) != 2 {
 		t.Errorf("after Ready: %+v, %d impl calls", r, len(h.agent.calls))
-	}
-}
-
-func TestHumanPRCommentForcesAddress(t *testing.T) {
-	h := newHarness(t, "")
-	h.agent.act = commitEach(t)
-	h.prs.feedback = []github.Feedback{{Author: "ann", Kind: github.FeedbackInline, Path: "f1.go", Line: 1, Body: "please rename", At: time.Now()}}
-	if err := h.pickup(); err != nil {
-		t.Fatal(err)
-	}
-	r := h.run()
-	if r.Step != StepChecks || len(h.agent.calls) != 2 || len(h.prs.reviews) != 2 || !r.PRCursor.Equal(h.prs.feedback[0].At) {
-		t.Fatalf("run = %+v, %d impl calls, %d reviews", r, len(h.agent.calls), len(h.prs.reviews))
-	}
-	p := h.agent.calls[1].Prompt
-	for _, want := range []string{"From people on the pull request", "**ann** (inline comment on `f1.go:1`): please rename"} {
-		if !strings.Contains(p, want) {
-			t.Errorf("address prompt missing %q:\n%s", want, p)
-		}
 	}
 }
 
@@ -222,16 +196,5 @@ func TestReviewerUsageLimit(t *testing.T) {
 	}
 	if r := h.run(); r.Step != StepReview || h.lin.state() != states.InProgress.ID || len(h.prs.reviews) != 0 {
 		t.Errorf("run = %+v", r)
-	}
-}
-
-func TestCapDiff(t *testing.T) {
-	d := strings.Repeat("+line\n", maxDiff/6+100)
-	got := capDiff(d)
-	if len(got) > maxDiff+100 || !strings.Contains(got, "diff cut at 100 KB") || !strings.HasSuffix(strings.Split(got, "…")[0], "\n") {
-		t.Errorf("capDiff: %d bytes, tail %q", len(got), got[len(got)-60:])
-	}
-	if capDiff("+x\n") != "+x\n" {
-		t.Error("short diff changed")
 	}
 }

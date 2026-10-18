@@ -11,16 +11,6 @@ import (
 	"time"
 )
 
-var sharedVars = map[string]string{
-	"LINEAR_CLIENT_ID":     "lin-client-id",
-	"LINEAR_CLIENT_SECRET": "lin-client-secret",
-	"NOTION_TOKEN":         "notion-secret-token",
-}
-
-func testSecrets(layers ...map[string]string) *Secrets {
-	return NewSecrets(nil, NewRedactor(), layers...)
-}
-
 const minimalProject = `
 name: nextdesk
 linear:
@@ -30,15 +20,9 @@ notion:
 `
 
 func TestProjectDefaults(t *testing.T) {
-	p, warns, err := ParseProject([]byte(minimalProject), "a1b2c3d4e5", testSecrets(sharedVars))
+	p, err := ParseProject([]byte(minimalProject), "a1b2c3d4e5")
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(warns) != 0 {
-		t.Errorf("unexpected warnings: %v", warns)
-	}
-	if p.Linear.ClientSecret != "lin-client-secret" || p.Notion.Token != "notion-secret-token" {
-		t.Errorf("secret defaults not applied: %+v", p.Linear)
 	}
 	if p.Linear.States != (States{"Ready", "In Progress", "In Review", "Blocked"}) {
 		t.Errorf("state defaults: %+v", p.Linear.States)
@@ -46,17 +30,14 @@ func TestProjectDefaults(t *testing.T) {
 	if p.Checks.StartGrace != 3*time.Minute || p.Agent.Timeout != time.Hour || p.Review.MaxRounds != 3 {
 		t.Errorf("limit defaults: %+v %+v", p.Checks, p.Agent)
 	}
-	if p.Agent.PermissionMode != "dontask" || p.GitHub.MergeMethod != "squash" {
-		t.Errorf("mode defaults: %+v %+v", p.Agent, p.GitHub)
-	}
-	if b, _ := p.BranchName(SampleTicket); b != "gosha/NXT-12-add-login" {
-		t.Errorf("branch = %q", b)
+	if p.GitHub.MergeMethod != "squash" {
+		t.Errorf("merge method default: %+v", p.GitHub)
 	}
 }
 
 func TestProjectStateOverrideSubset(t *testing.T) {
 	src := strings.Replace(minimalProject, "team: NXT", "team: NXT\n  states:\n    ready: Queued", 1)
-	p, _, err := ParseProject([]byte(src), "", testSecrets(sharedVars))
+	p, err := ParseProject([]byte(src), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,25 +49,9 @@ func TestProjectStateOverrideSubset(t *testing.T) {
 func TestProjectErrors(t *testing.T) {
 	cases := map[string]struct {
 		src, field, msg string
-		vars            map[string]string
 	}{
-		"literal secret": {
-			src:   minimalProject + "  token: abc123\n",
-			field: "notion.token", msg: "never a literal",
-		},
-		"literal secret inside a reference": {
-			src:   strings.Replace(minimalProject, "team: NXT", "team: NXT\n  client_secret: x${LINEAR_CLIENT_SECRET}", 1),
-			field: "linear.client_secret", msg: "never a literal",
-		},
-		"missing variable": {
-			src:   minimalProject,
-			field: "notion.token", msg: "${NOTION_TOKEN}",
-			vars: map[string]string{"LINEAR_CLIENT_ID": "x", "LINEAR_CLIENT_SECRET": "y"},
-		},
-		"empty variable": {
-			src:   minimalProject,
-			field: "notion.token", msg: "not set",
-			vars: map[string]string{"LINEAR_CLIENT_ID": "x", "LINEAR_CLIENT_SECRET": "y", "NOTION_TOKEN": ""},
+		"secret field": {
+			src: minimalProject + "  token: abc123\n", msg: "field token not found",
 		},
 		"unknown field": {
 			src: minimalProject + "extra: 1\n", msg: "field extra not found",
@@ -95,27 +60,14 @@ func TestProjectErrors(t *testing.T) {
 			src:   strings.Replace(minimalProject, "team: NXT", "team: \"\"", 1),
 			field: "linear.team", msg: "required",
 		},
-		"bad branch": {
-			src:   minimalProject + "github:\n  branch: \"gosha/{{.Ticket.Title}}\"\n",
-			field: "github.branch", msg: "cannot contain ' '",
-		},
-		"bad branch field": {
-			src:   minimalProject + "github:\n  branch: \"{{.Ticket.Nope}}\"\n",
-			field: "github.branch", msg: "Nope",
-		},
-		"bad permission mode": {
-			src:   minimalProject + "agent:\n  permission_mode: yolo\n",
-			field: "agent.permission_mode",
+		"permission mode": {
+			src: minimalProject + "agent:\n  permission_mode: auto\n", msg: "field permission_mode not found",
 		},
 		"bad yaml": {src: "name: [", msg: "yaml"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			vars := c.vars
-			if vars == nil {
-				vars = sharedVars
-			}
-			_, _, err := ParseProject([]byte(c.src), "abcdef1234", testSecrets(vars))
+			_, err := ParseProject([]byte(c.src), "abcdef1234")
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -136,54 +88,6 @@ func TestProjectErrors(t *testing.T) {
 	}
 }
 
-func TestProjectWarnings(t *testing.T) {
-	src := minimalProject + "github:\n  branch: \"bot/{{.Ticket.Title | slug}}\"\nagent:\n  permission_mode: bypass\n"
-	_, warns, err := ParseProject([]byte(src), "", testSecrets(sharedVars))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(warns) != 2 {
-		t.Errorf("warnings = %v", warns)
-	}
-}
-
-func TestExpand(t *testing.T) {
-	s := testSecrets(map[string]string{"A": "alpha", "B": "b#:x"})
-	cases := map[string]string{
-		"plain":         "plain",
-		"$HOME and $1":  "$HOME and $1",
-		"${A}-${B}":     "alpha-b#:x",
-		"$${A}":         "${A}",
-		"price $5 ${A}": "price $5 alpha",
-		"^v[0-9]+$":     "^v[0-9]+$",
-	}
-	for in, want := range cases {
-		got, err := Expand(in, s)
-		if err != nil || got != want {
-			t.Errorf("Expand(%q) = %q, %v; want %q", in, got, err, want)
-		}
-	}
-	for _, in := range []string{"${MISSING}", "${A", "${1X}"} {
-		if _, err := Expand(in, s); err == nil {
-			t.Errorf("Expand(%q): expected an error", in)
-		}
-	}
-}
-
-func TestExpandKeepsStructure(t *testing.T) {
-	// A value with YAML syntax in it must stay one string.
-	s := testSecrets(map[string]string{"V": "a: b # c\n- d"})
-	var out struct {
-		Field string `yaml:"field"`
-	}
-	if err := decode("f", []byte("field: ${V}\n"), s, &out); err != nil {
-		t.Fatal(err)
-	}
-	if out.Field != "a: b # c\n- d" {
-		t.Errorf("field = %q", out.Field)
-	}
-}
-
 func TestSecretsPrecedence(t *testing.T) {
 	env := func(k string) (string, bool) {
 		v, ok := map[string]string{"K": "from-env", "ONLY_ENV": "env-only"}[k]
@@ -194,6 +98,18 @@ func TestSecretsPrecedence(t *testing.T) {
 		if v, _ := s.Lookup(k); v != want {
 			t.Errorf("%s = %q, want %q", k, v, want)
 		}
+	}
+}
+
+func TestProjectCredentials(t *testing.T) {
+	vars := map[string]string{KeyLinearClientID: "id", KeyLinearClientSecret: "secret", KeyNotionToken: "notion"}
+	if _, err := NewSecrets(nil, NewRedactor(), vars).ProjectCredentials(); err == nil || !strings.Contains(err.Error(), KeyClaudeToken) {
+		t.Errorf("missing key not reported: %v", err)
+	}
+	vars[KeyClaudeToken] = "claude"
+	c, err := NewSecrets(nil, NewRedactor(), vars).ProjectCredentials()
+	if err != nil || c != (Credentials{"id", "secret", "notion", "claude"}) {
+		t.Errorf("credentials = %+v, %v", c, err)
 	}
 }
 
@@ -235,19 +151,18 @@ func TestGlobal(t *testing.T) {
 	if err := os.WriteFile(h.Path("github-app.pem"), []byte("key"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s := testSecrets(map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat", "TELEGRAM_BOT_TOKEN": "123:abc"})
-	g, err := ParseGlobal(h, "config.yaml", []byte("github_app:\n  app_id: 42\ntelegram:\n  chat_id: -100\n"), s)
+	g, err := ParseGlobal(h, "config.yaml", []byte("github_app:\n  app_id: 42\ntelegram:\n  chat_id: -100\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g.Concurrency != 1 || !g.Agent.SandboxEnabled() || g.Telegram.Digest() != "09:00" || g.Telegram.BotToken != "123:abc" {
+	if g.Concurrency != 1 || !g.Agent.SandboxEnabled() || g.Telegram.Digest() != "09:00" {
 		t.Errorf("defaults: %+v", g)
 	}
 	if g.GitHubApp.PrivateKeyFile != h.Path("github-app.pem") {
 		t.Errorf("key path = %q", g.GitHubApp.PrivateKeyFile)
 	}
 
-	g, err = ParseGlobal(h, "config.yaml", []byte("github_app:\n  app_id: 42\ntelegram:\n  chat_id: -100\n  digest_at: \"\"\nagent:\n  sandbox: false\n"), s)
+	g, err = ParseGlobal(h, "config.yaml", []byte("github_app:\n  app_id: 42\ntelegram:\n  chat_id: -100\n  digest_at: \"\"\nagent:\n  sandbox: false\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +171,7 @@ func TestGlobal(t *testing.T) {
 	}
 
 	os.Chmod(h.Path("github-app.pem"), 0o644)
-	if _, err := ParseGlobal(h, "config.yaml", []byte("github_app:\n  app_id: 42\ntelegram:\n  chat_id: -100\n"), s); err == nil {
+	if _, err := ParseGlobal(h, "config.yaml", []byte("github_app:\n  app_id: 42\ntelegram:\n  chat_id: -100\n")); err == nil {
 		t.Error("expected a key permissions error")
 	}
 }

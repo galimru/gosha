@@ -24,12 +24,12 @@ func TestSlug(t *testing.T) {
 	}
 }
 
-func TestRenderBranch(t *testing.T) {
+func TestRenderFuncs(t *testing.T) {
 	d := Data{Ticket: Ticket{ID: "NXT-12", Title: "Add login"}}
 	cases := map[string]string{
-		"gosha/{{.Ticket.ID}}-{{.Ticket.Title | slug}}":           "gosha/NXT-12-add-login",
-		"feature/{{.Ticket.ID | lower}}-{{.Ticket.Title | slug}}": "feature/nxt-12-add-login",
-		"{{.Ticket.Title | trunc 3 | upper}}":                     "ADD",
+		"gosha/{{.Ticket.ID}}-{{.Ticket.Title | slug}}":   "gosha/NXT-12-add-login",
+		"{{.Ticket.ID | lower}}-{{.Ticket.Title | slug}}": "nxt-12-add-login",
+		"{{.Ticket.Title | trunc 3 | upper}}":             "ADD",
 	}
 	for pattern, want := range cases {
 		got, err := Render("branch", pattern, d)

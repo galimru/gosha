@@ -29,6 +29,7 @@ CREATE TABLE project_state (
     project     TEXT PRIMARY KEY,
     status      TEXT NOT NULL,
     reason      TEXT NOT NULL DEFAULT '',
+    notion      INTEGER NOT NULL DEFAULT 0,
     commit_sha  TEXT NOT NULL DEFAULT '',
     updated_at  TEXT NOT NULL
 );

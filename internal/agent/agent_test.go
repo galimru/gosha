@@ -91,8 +91,8 @@ func TestRun(t *testing.T) {
 
 func TestRunModes(t *testing.T) {
 	for mode, want := range map[string]string{
-		ModeAuto:   "--permission-mode auto --permission-prompts none",
-		ModeBypass: "--dangerously-skip-permissions",
+		ModeAuto:    "--permission-mode auto --permission-prompts none",
+		ModeDontAsk: "--permission-mode dontAsk --permission-prompts none",
 	} {
 		args := strings.Join(Spec{Mode: mode}.args(), " ")
 		if !strings.Contains(args, want) {
@@ -244,16 +244,17 @@ func TestParseImplementer(t *testing.T) {
 
 func TestSettings(t *testing.T) {
 	home := t.TempDir()
-	for _, d := range []string{"projects/demo/repo", "projects/demo/worktrees/NXT-1", "projects/demo/worktrees/NXT-2",
-		"projects/demo/runs/NXT-1/3", "projects/other", "logs"} {
+	ws := filepath.Join(home, "workspaces/demo/NXT-1")
+	for _, d := range []string{"projects/demo/repo", "projects/demo/runs/NXT-1", "logs", "workspaces/demo/NXT-2/checkout",
+		"workspaces/demo/NXT-1/checkout", "workspaces/demo/NXT-1/tmp/3"} {
 		os.MkdirAll(filepath.Join(home, d), 0o700)
 	}
-	for _, f := range []string{"secrets.env", "gosha.db", "projects/demo/secrets.env", "projects/demo/runs/NXT-1/3-implement.jsonl"} {
+	for _, f := range []string{"config.yaml", "secrets.env", "github-app.pem", "gosha.db", "gosha.db-wal", "something-new"} {
 		os.WriteFile(filepath.Join(home, f), nil, 0o600)
 	}
 	p := Paths{
-		Home: home, Checkout: filepath.Join(home, "projects/demo/worktrees/NXT-1"),
-		RunDir: filepath.Join(home, "projects/demo/runs/NXT-1/3"), UserHome: "/u", Writable: []string{"~/.cargo", "/opt/x"},
+		Home: home, Workspace: ws, Checkout: filepath.Join(ws, "checkout"), RunDir: filepath.Join(ws, "tmp/3"),
+		UserHome: "/u", Writable: []string{"~/.cargo", "/opt/x"},
 	}
 	data, err := Settings(p, RoleImplementer, true)
 	if err != nil {
@@ -271,25 +272,26 @@ func TestSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	denied := func(rel string) bool {
-		return slices.Contains(s.Permissions.Deny, "Read(/"+filepath.Join(home, rel)+")")
+		path := filepath.Join(home, rel)
+		return slices.Contains(s.Permissions.Deny, "Read(/"+path+"/**)") && slices.Contains(s.Permissions.Deny, "Edit(/"+path+"/**)")
 	}
-	for _, rel := range []string{"secrets.env", "gosha.db", "logs", "projects/other", "projects/demo/repo", "projects/demo/secrets.env",
-		"projects/demo/worktrees/NXT-2", "projects/demo/runs/NXT-1/3-implement.jsonl"} {
-		if !denied(rel) {
-			t.Errorf("%s not denied", rel)
+	// Every top-level entry but workspaces/ is denied, so a new one can't
+	// fail open.
+	entries, _ := os.ReadDir(home)
+	for _, e := range entries {
+		if e.Name() != "workspaces" && !denied(e.Name()) {
+			t.Errorf("%s not denied", e.Name())
 		}
 	}
-	for _, rel := range []string{"projects", "projects/demo", "projects/demo/worktrees/NXT-1", "projects/demo/runs/NXT-1/3"} {
-		if denied(rel) {
-			t.Errorf("%s denied", rel)
-		}
+	if denied("workspaces") {
+		t.Error("workspaces denied")
 	}
 	if !slices.Contains(s.Permissions.Allow, "Edit(/"+p.Checkout+"/**)") {
 		t.Errorf("checkout not editable: %v", s.Permissions.Allow)
 	}
 	fs := s.Sandbox.Filesystem
 	if !s.Sandbox.FailIfUnavailable || s.Sandbox.AllowUnsandboxedCommands || !slices.Equal(fs.DenyRead, []string{home}) ||
-		!slices.Contains(fs.AllowRead, p.Checkout) || !slices.Contains(fs.AllowWrite, "/u/.cargo") ||
+		!slices.Equal(fs.AllowRead, []string{ws}) || !slices.Contains(fs.AllowWrite, "/u/.cargo") ||
 		!slices.Contains(fs.AllowWrite, "/opt/x") || !slices.Contains(fs.AllowWrite, "/u/.cache") {
 		t.Errorf("sandbox = %+v", s.Sandbox)
 	}
@@ -300,10 +302,10 @@ func TestSettings(t *testing.T) {
 	}
 }
 
-func TestDefaultPrompt(t *testing.T) {
-	// No repo override: the embedded default is used.
+func TestPrompt(t *testing.T) {
 	dir := t.TempDir()
-	for _, args := range [][]string{{"init", "--quiet", "--initial-branch=main"}, {"commit", "--quiet", "--allow-empty", "-m", "x"}} {
+	git := func(args ...string) {
+		t.Helper()
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
 		cmd.Env = append(gitx.Env(""), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
@@ -311,6 +313,8 @@ func TestDefaultPrompt(t *testing.T) {
 			t.Fatalf("%v %s", err, out)
 		}
 	}
+	git("init", "--quiet", "--initial-branch=main")
+	git("commit", "--quiet", "--allow-empty", "-m", "x")
 	d := tmpl.Data{
 		Project: "demo", Branch: "gosha/NXT-12-add-login", BaseBranch: "main", ResultFile: "/r/result.json",
 		Ticket: tmpl.Ticket{ID: "NXT-12", Title: "Add login", Description: "Users log in.",
@@ -325,7 +329,20 @@ func TestDefaultPrompt(t *testing.T) {
 			t.Errorf("prompt missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "Project context") {
-		t.Error("context section without a context dir")
+	if strings.Contains(got, "Project context") || strings.Contains(got, "Project instructions") {
+		t.Error("context or instructions section without either")
+	}
+
+	// The repo's instructions file is appended.
+	os.MkdirAll(filepath.Join(dir, ".gosha"), 0o755)
+	os.WriteFile(filepath.Join(dir, InstructionsFile), []byte("Use pnpm, never npm.\n"), 0o644)
+	git("add", ".")
+	git("commit", "--quiet", "-m", "instructions")
+	got, err = RenderPrompt(context.Background(), gitx.Open(filepath.Join(dir, ".git")), "HEAD", "implement.md", d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(got, "# Project instructions\n\nFrom the repository's `.gosha/instructions.md`:\n\nUse pnpm, never npm.\n") {
+		t.Errorf("instructions not appended:\n%s", got)
 	}
 }

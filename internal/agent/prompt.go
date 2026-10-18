@@ -4,35 +4,39 @@ import (
 	"context"
 	"embed"
 	"errors"
+	"strings"
 
 	"github.com/galimru/gosha/internal/gitx"
 	"github.com/galimru/gosha/internal/tmpl"
 )
 
 //go:embed prompts/*.md
-var defaults embed.FS
+var prompts embed.FS
 
-// PromptDir is where a repo overrides the default prompts (DESIGN §5.3).
-const PromptDir = ".gosha/prompts/"
+// InstructionsFile is a repo's optional extra instructions, appended to
+// every prompt (DESIGN §5.3).
+const InstructionsFile = ".gosha/instructions.md"
 
-// LoadPrompt reads a prompt template from the repo at commit (the default
-// branch, never a checkout), falling back to the embedded default.
-func LoadPrompt(ctx context.Context, repo *gitx.Repo, commit, name string) (string, error) {
-	data, err := repo.Show(ctx, commit, PromptDir+name)
-	if errors.Is(err, gitx.ErrNotFound) {
-		data, err = defaults.ReadFile("prompts/" + name)
-	}
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
-// RenderPrompt loads and renders a prompt template.
+// RenderPrompt renders a built-in prompt and appends the repo's
+// instructions file, read at commit (the default branch, never a checkout).
 func RenderPrompt(ctx context.Context, repo *gitx.Repo, commit, name string, d tmpl.Data) (string, error) {
-	text, err := LoadPrompt(ctx, repo, commit, name)
+	text, err := prompts.ReadFile("prompts/" + name)
 	if err != nil {
 		return "", err
 	}
-	return tmpl.Render(PromptDir+name, text, d)
+	out, err := tmpl.Render(name, string(text), d)
+	if err != nil {
+		return "", err
+	}
+	extra, err := repo.Show(ctx, commit, InstructionsFile)
+	if errors.Is(err, gitx.ErrNotFound) {
+		return out, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if s := strings.TrimSpace(string(extra)); s != "" {
+		out = strings.TrimRight(out, "\n") + "\n\n# Project instructions\n\nFrom the repository's `" + InstructionsFile + "`:\n\n" + s + "\n"
+	}
+	return out, nil
 }

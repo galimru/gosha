@@ -123,9 +123,6 @@ func files(t *testing.T, dir string) []string {
 	var out []string
 	filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 		rel, _ := filepath.Rel(dir, p)
-		if d.IsDir() && rel == cacheDir {
-			return filepath.SkipDir
-		}
 		if !d.IsDir() {
 			out = append(out, filepath.ToSlash(rel))
 		}
@@ -175,8 +172,13 @@ func TestMirrorIncremental(t *testing.T) {
 	refresh(t, m)
 	f.children = nil
 	*now = now.Add(15 * time.Minute)
+	before := read(t, filepath.Join(m.Dir, "product/vision.md"))
 	if st := refresh(t, m); st.Changed() || len(f.children) != 0 {
 		t.Fatalf("unchanged refresh: stats %+v, fetched %v", st, f.children)
+	}
+	// A page that isn't fetched keeps its content, links and all.
+	if after := read(t, filepath.Join(m.Dir, "product/vision.md")); after != before || !strings.Contains(after, "See [Glossary](../glossary.md)") {
+		t.Errorf("kept page changed:\n%s", after)
 	}
 
 	// An edit fetches just that page.
@@ -197,12 +199,12 @@ func TestMirrorRenameMoveDelete(t *testing.T) {
 	refresh(t, m)
 	f.children = nil
 
-	// Rename: the file moves and the page linking to it follows, without
-	// being fetched again.
+	// Rename: the tree changed, so every page is fetched again and the
+	// page linking to it follows.
 	f.pages[id(3)].title = "Terms"
 	f.pages[id(3)].edited = t0.Add(10 * time.Minute)
 	st := refresh(t, m)
-	if st.Moved != 1 || slices.Contains(f.children, id(2)) {
+	if st.Moved != 1 || !slices.Contains(f.children, id(2)) {
 		t.Fatalf("rename: stats %+v, fetched %v", st, f.children)
 	}
 	if v := read(t, filepath.Join(m.Dir, "product/vision.md")); !strings.Contains(v, "See [Terms](../terms.md)") {
@@ -239,9 +241,6 @@ func TestMirrorRenameMoveDelete(t *testing.T) {
 	}
 	if v := read(t, filepath.Join(m.Dir, "vision.md")); !strings.Contains(v, "(https://www.notion.so/"+id(3)+")") {
 		t.Errorf("link to deleted page:\n%s", v)
-	}
-	if entries, _ := os.ReadDir(filepath.Join(m.Dir, cacheDir)); len(entries) != 3 {
-		t.Errorf("cache not pruned: %d entries", len(entries))
 	}
 }
 

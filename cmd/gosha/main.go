@@ -67,7 +67,7 @@ func (a *app) rootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&a.logLevel, "log-level", "info", "log level: debug, info, warn, error")
 	root.AddCommand(
 		a.addCmd(), a.removeCmd(), a.listCmd(), a.validateCmd(), a.doctorCmd(),
-		a.authCmd(), a.secretsCmd(), a.statusCmd(), a.runCmd(), a.contextCmd(),
+		a.secretsCmd(), a.statusCmd(), a.runCmd(), a.contextCmd(),
 	)
 	return root
 }
@@ -126,7 +126,11 @@ func (a *app) env(ctx context.Context) (*pipeline.Env, error) {
 	if err != nil {
 		return nil, err
 	}
-	g, err := config.LoadGlobal(a.home, secrets)
+	botToken, err := secrets.Require(config.KeyTelegramToken)
+	if err != nil {
+		return nil, err
+	}
+	g, err := config.LoadGlobal(a.home)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +143,7 @@ func (a *app) env(ctx context.Context) (*pipeline.Env, error) {
 		return nil, err
 	}
 	a.closers = append(a.closers, func() { st.Close() })
-	tg := notify.NewTelegram(g.Telegram.BotToken, g.Telegram.ChatID, a.red, a.log)
+	tg := notify.NewTelegram(botToken, g.Telegram.ChatID, a.red, a.log)
 	a.closers = append(a.closers, func() {
 		// Give queued messages a moment; a Telegram outage must not hang exit.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

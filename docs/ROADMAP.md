@@ -11,13 +11,14 @@ Implementation order for the design in [DESIGN.md](DESIGN.md). The riskiest assu
 | 4 | Checks & merge | Fully automatic up to merge |
 | 5 | Project context | Agents work from the Notion specs |
 | 6 | Deliver | Full ticket lifecycle |
-| 7 | Production | Runs unattended as a service |
+| 7 | Feedback | Simpler design from the M0–M6 feedback |
+| 8 | Production | Runs unattended as a service |
 
 ## M0 — Spikes
 
 Throwaway code. The goal is answers, not features. Any "no" updates DESIGN.md before M1 starts.
 
-**Status: done** (2026-10-18). Findings in [SPIKES.md](SPIKES.md). Changes it caused: agents default to `dontask` mode with an allowlist instead of bypass, and Linear uses the `client_credentials` grant. Linux was not verified and stays best effort (re-check before M7).
+**Status: done** (2026-10-18). Findings in [SPIKES.md](SPIKES.md). Changes it caused: agents default to `dontask` mode with an allowlist instead of bypass, and Linear uses the `client_credentials` grant. Linux was not verified and stays best effort (re-check before M8).
 
 - **Claude runner** (DESIGN §7, §7.1), on macOS **and** an Ubuntu VPS, as a non-root user:
   - headless `claude -p` in bypass mode authenticates with a `claude setup-token` token
@@ -102,7 +103,7 @@ Changes from the plan:
 
 ## M5 — Project context (Notion mirror)
 
-**Status: built** (2026-10-18), pending the end-to-end check below on a real Notion workspace. Behaviour that is specific to M5, until the daemon exists (M7):
+**Status: built** (2026-10-18), pending the end-to-end check below on a real Notion workspace. Behaviour that is specific to M5, until the daemon exists (M8):
 - **The idle refresh runs from `gosha run`'s poll loop** (every 15 minutes, and on every poll while the project is paused), not from a daemon-wide refresher.
 
 Changes from the plan:
@@ -138,14 +139,35 @@ Changes from the plan:
 
 **Done when:** the full lifecycle in DESIGN §2 works, including follow-ups and Blocked → resume.
 
-## M7 — Production
+## M7 — Feedback
+
+Simplifies what M0–M6 built, from a review of the design after M6. Each point became a commit that updated DESIGN.md; the two rejected proposals (a single round budget, a config snapshot per pickup) are recorded in the DESIGN.md decisions log.
+
+**Status: built** (2026-10-18), in one PR with a commit per point, pending the end-to-end check below on a real project. Gosha isn't live yet, so nothing is migrated: existing migrations were edited in place, and an old `gosha.db` or `~/.gosha/projects/*/worktrees/` should be deleted.
+
+Changes from the plan:
+- **The reviewer keeps any Bash,** but in the sandbox it can write only its pass's temp directory, so its clone is read-only. With the sandbox off, only the removed edit tools and the `auto` classifier stop it from writing.
+- **A Notion access pause is recorded as such** (`project_state.notion`), so other passes don't clear it; only a pickup's refresh does.
+- **A tree change refetches every page** (a page added, renamed, moved or removed, or a title changed); content edits still fetch only the changed pages.
+- **`gosha auth status` and `gosha service` didn't exist yet,** so point 18 removed `auth linear` and moved its checks into `doctor`; `service` stays in M8.
+- **The daily digest is still only configured;** it's built in M8 with the daemon. The heartbeat ping is in `gosha run`'s loop.
+
+- **Sandbox:** agent workspaces in `workspaces/` (1), `agent.sandbox` picks the permission mode (2), no `agent.setup` (3), read-only reviewer (17)
+- **Pipeline:** report the deploy instead of blocking on it (4), Linear as the only instruction channel (5), base sync through GitHub's update-branch (7), simpler expected checks (8), no `/restart` (11)
+- **Config:** fixed branch names (9), `.gosha/instructions.md` instead of prompt overrides (10), secrets by fixed key names (12)
+- **Reporting:** Telegram for alerts and the daily digest, plus a heartbeat ping (14), Notion refresh at pickup only (15), shorter Delivered comment (16)
+- **CLI:** offline `validate`, host checks in `doctor` (18)
+
+**Done when:** every agreed point is in DESIGN.md, and a ticket still goes Ready → delivered on a real project.
+
+## M8 — Production
 
 - Daemon: multiple projects, global scheduler, panic isolation
 - Crash recovery, cancel and pause (Backlog/Todo/Canceled), usage-limit pause/resume
 - `gosha service install|uninstall|start|stop|restart|status` (systemd + launchd)
 - Log rotation, daily digest
 - Verify the agent sandbox on Linux (bubblewrap, required packages, root refusal); see SPIKES.md open items
-- Remaining CLI: `init`, `config show`, `auth status`, `logs`
+- Remaining CLI: `init`, `config show`, `logs`
 
 **Done when:** Gosha runs as a service on a VPS for a week across two projects without intervention beyond Linear.
 

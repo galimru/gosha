@@ -16,7 +16,7 @@ These comments were written by humans since the last run. They take priority ove
 
 {{.Body}}
 {{end}}{{end}}{{if .Feedback.Review}}
-# Feedback on the pull request
+# Review feedback
 
 {{.Feedback.Review}}
 {{end}}{{if .Feedback.CI}}
@@ -28,9 +28,7 @@ CI failed on the pull request. These are the failing checks, with the failing pa
 {{end}}{{if .Feedback.Conflicts}}
 # Merge conflicts
 
-`{{.BaseBranch}}` has moved on and no longer merges cleanly into this branch. Run `git merge origin/{{.BaseBranch}}`, resolve the conflicts so that both sides' intent is kept, run the tests, and commit the merge. Don't rebase. The conflicted files:
-
-{{.Feedback.Conflicts}}
+`{{.BaseBranch}}` has moved on and no longer merges cleanly into this branch. Run `git merge origin/{{.BaseBranch}}`, resolve the conflicts it reports so that both sides' intent is kept, run the tests, and commit the merge. Don't rebase.
 {{end}}{{if .Context.Dir}}
 # Project context
 

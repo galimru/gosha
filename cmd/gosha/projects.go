@@ -10,7 +10,6 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
-	"go.yaml.in/yaml/v3"
 
 	"github.com/galimru/gosha/internal/config"
 	"github.com/galimru/gosha/internal/gitx"
@@ -71,22 +70,13 @@ func (a *app) addCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			name, err := peekName(data)
+			cfg, err := config.ParseProject(data, commit)
 			if err != nil {
 				return err
 			}
-			pp := a.home.Project(name)
+			pp := a.home.Project(cfg.Name)
 			if _, err := os.Stat(pp.Repo()); err == nil {
-				return fmt.Errorf("project %q is already registered (%s)", name, pp.Dir)
-			}
-			// Per-project secrets may be put in place before adding.
-			secrets, err := config.LoadSecrets(a.home, name, a.red)
-			if err != nil {
-				return err
-			}
-			cfg, warns, err := config.ParseProject(data, commit, secrets)
-			if err != nil {
-				return err
+				return fmt.Errorf("project %q is already registered (%s)", cfg.Name, pp.Dir)
 			}
 			if err := os.MkdirAll(pp.Dir, 0o700); err != nil {
 				return err
@@ -94,11 +84,8 @@ func (a *app) addCmd() *cobra.Command {
 			if err := os.Rename(r.Dir, pp.Repo()); err != nil {
 				return err
 			}
-			if _, err := env.Store.SetProjectState(ctx, store.ProjectState{Project: name, Status: store.StatusActive, Commit: commit}); err != nil {
+			if _, err := env.Store.SetProjectState(ctx, store.ProjectState{Project: cfg.Name, Status: store.StatusActive, Commit: commit}); err != nil {
 				return err
-			}
-			for _, w := range warns {
-				fmt.Fprintln(cmd.ErrOrStderr(), "warning:", w)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "added %s (%s, %s @ %.7s, Linear team %s)\n", cfg.Name, repo, base, commit, cfg.Linear.Team)
 			return nil
@@ -106,26 +93,11 @@ func (a *app) addCmd() *cobra.Command {
 	}
 }
 
-// peekName reads just the project name, to find its directory before the
-// full config (which may need that project's secrets) is parsed.
-func peekName(data []byte) (string, error) {
-	var v struct {
-		Name string `yaml:"name"`
-	}
-	if err := yaml.Unmarshal(data, &v); err != nil {
-		return "", fmt.Errorf("%s: %w", config.ProjectFile, err)
-	}
-	if v.Name == "" || strings.ContainsAny(v.Name, `/\`) || strings.HasPrefix(v.Name, ".") {
-		return "", fmt.Errorf("%s: name: missing or invalid", config.ProjectFile)
-	}
-	return v.Name, nil
-}
-
 func (a *app) removeCmd() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "remove <project>",
-		Short: "Unregister a project and delete its directory (clone, worktrees, context, transcripts)",
+		Short: "Unregister a project and delete its directory (clone, context, transcripts) and agent workspaces",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -140,8 +112,10 @@ func (a *app) removeCmd() *cobra.Command {
 					return errors.New("not confirmed")
 				}
 			}
-			if err := os.RemoveAll(pp.Dir); err != nil {
-				return err
+			for _, d := range []string{pp.Dir, filepath.Join(a.home.WorkspacesDir(), name)} {
+				if err := os.RemoveAll(d); err != nil {
+					return err
+				}
 			}
 			st, err := store.Open(cmd.Context(), a.home.DB())
 			if err != nil {

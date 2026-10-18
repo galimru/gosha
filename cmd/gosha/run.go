@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -27,7 +28,7 @@ func (a *app) runCmd() *cobra.Command {
 			"Ctrl-C stops the agent and leaves the ticket In Progress; the next run continues it.\n\n" +
 			"--once handles at most one ticket and exits.\n" +
 			"--dry-run does a single pickup pass: it lists the Ready tickets, decides what would\n" +
-			"be picked up and how, and reports it here and in Telegram. Nothing changes in Linear or GitHub.",
+			"be picked up and how, and prints it. Nothing changes in Linear or GitHub, and nothing goes to Telegram.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := refuseRoot(); err != nil {
@@ -54,10 +55,10 @@ func (a *app) runCmd() *cobra.Command {
 				return fmt.Errorf("claude: %w", err)
 			}
 			if !env.Global.Agent.SandboxEnabled() {
-				a.log.Warn("agent.sandbox is false: agents can read Gosha's secrets")
+				a.log.Warn("agent.sandbox is false: agents run in auto mode without the sandbox and can read Gosha's secrets")
 			}
 			if once {
-				handled, err := env.Pass(ctx, name, ticket)
+				handled, err := a.pass(ctx, env, name, ticket)
 				if err == nil && !handled {
 					fmt.Fprintln(cmd.OutOrStdout(), "nothing to pick up")
 				}
@@ -77,7 +78,16 @@ func (a *app) runCmd() *cobra.Command {
 func (a *app) loop(ctx context.Context, env *pipeline.Env, name, ticket string) error {
 	a.log.Info("running", "project", name, "poll", pollInterval)
 	for {
-		handled, err := env.Pass(ctx, name, ticket)
+		handled, err := a.pass(ctx, env, name, ticket)
+		var crash *crashError
+		if errors.As(err, &crash) {
+			return err
+		}
+		if url := env.Global.HeartbeatURL; url != "" && ctx.Err() == nil {
+			if err := notify.Ping(ctx, url); err != nil {
+				a.log.Warn("heartbeat", "err", a.redact(err.Error()))
+			}
+		}
 		wait := pollInterval
 		var le *agent.LimitError
 		var pe *pipeline.PausedError
@@ -108,4 +118,25 @@ func (a *app) loop(ctx context.Context, env *pipeline.Env, name, ticket string) 
 			env.Notify.Send(notify.Event{Project: name, Text: "▶️ usage limit reset · resumed"})
 		}
 	}
+}
+
+// crashError is a pass that panicked.
+type crashError struct {
+	panic any
+	stack []byte
+}
+
+func (e *crashError) Error() string { return fmt.Sprintf("crashed: %v\n%s", e.panic, e.stack) }
+
+// pass runs one pickup pass. A panic becomes a crashError and a Telegram
+// alert, so the process can exit cleanly after the alert is sent.
+func (a *app) pass(ctx context.Context, env *pipeline.Env, name, ticket string) (handled bool, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = &crashError{panic: r, stack: debug.Stack()}
+			a.log.Error("crashed", "project", name, "panic", a.redact(fmt.Sprint(r)))
+			env.Notify.Send(notify.Event{Project: name, Text: fmt.Sprintf("💥 crashed: %v", r)})
+		}
+	}()
+	return env.Pass(ctx, name, ticket)
 }

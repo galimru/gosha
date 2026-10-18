@@ -11,7 +11,6 @@ import (
 
 	"github.com/galimru/gosha/internal/agent"
 	"github.com/galimru/gosha/internal/github"
-	"github.com/galimru/gosha/internal/notify"
 	"github.com/galimru/gosha/internal/store"
 	"github.com/galimru/gosha/internal/tmpl"
 )
@@ -24,25 +23,10 @@ var deployPoll = 15 * time.Second
 // on the run as it's gathered, so a delivery resumed after a crash still
 // has it, and a follow-up can be told what was shipped.
 type delivery struct {
-	Summary      string   `json:"summary,omitempty"`
-	Verification string   `json:"verification,omitempty"`
-	Assumptions  []string `json:"assumptions,omitempty"`
-	LeftOut      []string `json:"left_out,omitempty"`
-	// Reviews are the posted reviews, in order, and Fixes the check and
-	// conflict rounds, in plain words.
-	Reviews []reviewRound `json:"reviews,omitempty"`
-	Fixes   []string      `json:"fixes,omitempty"`
-	Checks  []string      `json:"checks,omitempty"`
-	Diff    string        `json:"diff,omitempty"`
-	Deploy  *deployResult `json:"deploy,omitempty"`
-}
-
-type reviewRound struct {
-	Label    string `json:"label"`
-	Approved bool   `json:"approved"`
-	Must     int    `json:"must"`
-	Should   int    `json:"should"`
-	Nit      int    `json:"nit"`
+	Summary     string        `json:"summary,omitempty"`
+	Assumptions []string      `json:"assumptions,omitempty"`
+	LeftOut     []string      `json:"left_out,omitempty"`
+	Deploy      *deployResult `json:"deploy,omitempty"`
 }
 
 type deployResult struct {
@@ -77,18 +61,8 @@ func (d *delivery) addResult(res *agent.ImplementerResult) {
 	if d.Summary == "" {
 		d.Summary = strings.TrimSpace(res.Summary)
 	}
-	if v := strings.TrimSpace(res.Verification); v != "" {
-		d.Verification = v
-	}
 	d.Assumptions = appendNew(d.Assumptions, res.Assumptions)
 	d.LeftOut = appendNew(d.LeftOut, res.LeftOut)
-}
-
-func (d *delivery) addReview(label string, res *agent.ReviewerResult) {
-	d.Reviews = append(d.Reviews, reviewRound{
-		Label: strings.TrimPrefix(label, "Gosha "), Approved: verdictMark(res) == "✅",
-		Must: res.Count(agent.SeverityMust), Should: res.Count(agent.SeverityShould), Nit: res.Count(agent.SeverityNit),
-	})
 }
 
 func appendNew(to, from []string) []string {
@@ -130,18 +104,20 @@ func (t *ticket) afterMerge(ctx context.Context) error {
 	if err := t.p.Repo.DeleteBranch(ctx, tok, t.run.Branch); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(t.checkout()); err != nil {
+	// No agent runs after the merge, so the whole workspace can go.
+	if err := os.RemoveAll(t.workspace().Dir); err != nil {
 		return err
 	}
-	if t.p.Config.Deploy.Workflow != "" && !t.report.Deploy.ok() {
+	if t.p.Config.Deploy.Workflow != "" && t.report.Deploy == nil {
 		return t.deployWatch(ctx)
 	}
 	return t.deliver(ctx)
 }
 
-// deployWatch waits for the deploy workflow's run on the merge commit
-// (DESIGN §8.7). The code is merged already, so a failure goes Blocked for
-// a human to see; moving the ticket to Ready looks at the deploy again.
+// deployWatch waits for the deploy workflow's run on the merge commit and
+// records how it went (DESIGN §8.7). The code is merged already, so the
+// ticket is delivered either way: the Delivered comment reports the deploy,
+// and a failure is fixed through a follow-up.
 func (t *ticket) deployWatch(ctx context.Context) error {
 	if err := t.save(ctx, StepDeploy); err != nil {
 		return err
@@ -161,37 +137,23 @@ func (t *ticket) deployWatch(ctx context.Context) error {
 			return err
 		}
 	}
-	const need = "the code is already merged. Once the deploy is fixed or re-run, move the ticket to Ready and I'll check it again. " +
-		"To have me change the code instead, comment what to change and move the ticket to Ready for a follow-up pull request."
-	wf := "`" + cfg.Workflow + "`"
 	switch {
 	case run == nil:
-		return t.blockWith(ctx, fmt.Sprintf("No run of %s started for the merge commit `%.7s` on `%s` within `deploy.timeout` (%v). "+
-			"Check that the workflow runs on pushes to `%s`.", wf, t.run.MergeSHA, t.run.BaseBranch, cfg.Timeout, t.run.BaseBranch), nil, need)
+		t.report.Deploy = &deployResult{Conclusion: "no run",
+			Failure: fmt.Sprintf("No run of `%s` started for the merge commit within `deploy.timeout` (%v).", cfg.Workflow, cfg.Timeout)}
 	case run.Status != "completed":
-		return t.blockWith(ctx, fmt.Sprintf("The deploy (%s) was still running after `deploy.timeout` (%v): %s", wf, cfg.Timeout, run.URL), nil, need)
-	}
-	t.report.Deploy = &deployResult{Conclusion: run.Conclusion, URL: run.URL}
-	if run.Conclusion != "success" {
-		t.report.Deploy.Failure = t.deployFailure(ctx, run)
-		if err := t.save(ctx, StepDeploy); err != nil {
-			return err
+		t.report.Deploy = &deployResult{Conclusion: "still running", URL: run.URL,
+			Failure: fmt.Sprintf("Still running after `deploy.timeout` (%v).", cfg.Timeout)}
+	default:
+		t.report.Deploy = &deployResult{Conclusion: run.Conclusion, URL: run.URL}
+		if run.Conclusion != "success" {
+			t.report.Deploy.Failure = t.deployFailure(ctx, run)
 		}
-		t.notify(fmt.Sprintf("%s · deploy ❌ %s", t.issue.Identifier, run.Conclusion), notify.Link{Text: "run", URL: run.URL})
-		reason := fmt.Sprintf("The deploy (%s) ended with `%s`: %s", wf, run.Conclusion, run.URL)
-		if f := t.report.Deploy.Failure; f != "" {
-			reason += "\n\n" + f
-		}
-		return t.blockWith(ctx, reason, nil, need)
 	}
 	if err := t.save(ctx, StepDeploy); err != nil {
 		return err
 	}
-	where := cfg.URL
-	if where == "" {
-		where = run.URL
-	}
-	t.notify(fmt.Sprintf("%s · deploy ✅ %s", t.issue.Identifier, where), notify.Link{Text: "run", URL: run.URL})
+	t.e.Log.Info("deploy", "project", t.p.Name, "ticket", t.issue.Identifier, "conclusion", t.report.Deploy.Conclusion, "url", t.report.Deploy.URL)
 	return t.deliver(ctx)
 }
 
@@ -238,55 +200,41 @@ func (t *ticket) deliver(ctx context.Context) error {
 		return err
 	}
 	t.e.Log.Info("delivered", "project", t.p.Name, "ticket", t.issue.Identifier)
-	t.notify(fmt.Sprintf("%s · ✅ delivered · In Review", t.issue.Identifier), t.ticketLink(), t.prLink())
+	msg := fmt.Sprintf("%s · ✅ delivered · In Review", t.issue.Identifier)
+	if d := t.report.Deploy; d != nil && !d.ok() {
+		msg += " · deploy ❌ " + d.Conclusion
+	}
+	t.notify(msg, t.ticketLink(), t.prLink())
 	return nil
 }
 
-// deliveredComment is the Delivered comment (DESIGN §3).
+// deliveredComment is the Delivered comment (DESIGN §3): what shipped, the
+// deploy, and what was assumed or left out. The rest is on the PR.
 func (t *ticket) deliveredComment() string {
 	d, red := t.report, t.e.Redactor.Redact
 	var b strings.Builder
-	fmt.Fprintf(&b, "**Delivered:** [PR #%d](%s) is merged (`%.7s`)", t.run.PRNumber, t.run.PRURL, t.run.MergeSHA)
-	if d.Diff != "" {
-		fmt.Fprintf(&b, " · %s", d.Diff)
-	}
-	b.WriteString(".\n")
+	fmt.Fprintf(&b, "**Delivered:** [PR #%d](%s) is merged (`%.7s`).\n", t.run.PRNumber, t.run.PRURL, t.run.MergeSHA)
 	if d.Summary != "" {
 		b.WriteString("\n" + red(d.Summary) + "\n")
 	}
-
-	b.WriteString("\n**How it was checked**\n")
-	if d.Verification != "" {
-		b.WriteString("- Verification: " + red(oneLine(d.Verification)) + "\n")
-	}
-	if len(d.Reviews) > 0 {
-		var rs []string
-		for _, r := range d.Reviews {
-			s := fmt.Sprintf("%s ✅", r.Label)
-			if !r.Approved {
-				s = fmt.Sprintf("%s ❌ (%d must, %d should) → addressed", r.Label, r.Must, r.Should)
-			}
-			rs = append(rs, s)
-		}
-		b.WriteString("- Review: " + strings.Join(rs, "; ") + "\n")
-	} else {
-		fmt.Fprintf(&b, "- Review: %d round(s) by Gosha's reviewer\n", max(t.run.ReviewRound, 1))
-	}
-	for _, f := range d.Fixes {
-		b.WriteString("- " + f + "\n")
-	}
-	switch {
-	case len(d.Checks) > 0:
-		b.WriteString("- Checks passed: " + codeList(d.Checks) + "\n")
-	case t.run.CheckedSHA != "":
-		b.WriteString("- Checks: none expected\n")
-	}
-
 	if dep := d.Deploy; dep != nil {
-		b.WriteString("\n**Deployment**\n")
-		fmt.Fprintf(&b, "- `%s` %s: %s\n", t.p.Config.Deploy.Workflow, dep.Conclusion, dep.URL)
-		if u := t.p.Config.Deploy.URL; u != "" {
-			b.WriteString("- " + u + "\n")
+		mark := "✅"
+		if !dep.ok() {
+			mark = "❌"
+		}
+		fmt.Fprintf(&b, "\n**Deploy:** %s `%s` %s", mark, t.p.Config.Deploy.Workflow, dep.Conclusion)
+		if dep.URL != "" {
+			b.WriteString(" · [run](" + dep.URL + ")")
+		}
+		if u := t.p.Config.Deploy.URL; u != "" && dep.ok() {
+			b.WriteString(" · " + u)
+		}
+		b.WriteString("\n")
+		if !dep.ok() {
+			if dep.Failure != "" {
+				b.WriteString("\n" + red(dep.Failure) + "\n")
+			}
+			b.WriteString("\nThe code is merged. To have Gosha fix the deploy, comment what to change and move the ticket to Ready for a follow-up.\n")
 		}
 	}
 	writeList(&b, "Assumptions", d.Assumptions, red)
@@ -304,5 +252,3 @@ func writeList(b *strings.Builder, title string, items []string, red func(string
 		b.WriteString("- " + red(s) + "\n")
 	}
 }
-
-func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }

@@ -25,8 +25,7 @@ var (
 func project(t *testing.T) *config.Project {
 	t.Helper()
 	src := "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\n"
-	vars := map[string]string{"LINEAR_CLIENT_ID": "a", "LINEAR_CLIENT_SECRET": "b", "NOTION_TOKEN": "c"}
-	p, _, err := config.ParseProject([]byte(src), "", config.NewSecrets(nil, nil, vars))
+	p, err := config.ParseProject([]byte(src), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,14 +81,11 @@ func TestPlanModes(t *testing.T) {
 		mode, branch string
 	}{
 		{Candidate{Issue: is}, ModeFresh, "gosha/NXT-12-add-login"},
-		{Candidate{Issue: is, NewComments: []linear.Comment{{Body: "please\n /restart \n"}}}, ModeRestart, "gosha/NXT-12-add-login"},
-		{Candidate{Issue: is, NewComments: []linear.Comment{{Body: "don't /restart yet"}}}, ModeFresh, "gosha/NXT-12-add-login"},
 		{Candidate{Issue: is, OpenRun: &store.Run{Branch: "gosha/NXT-12-add-login-2"}}, ModeResume, "gosha/NXT-12-add-login-2"},
 		{Candidate{Issue: is, OpenRun: &store.Run{Branch: "b", PRNumber: 3}}, "resume (review)", "b"},
 		{Candidate{Issue: is, OpenRun: &store.Run{Branch: "b", PRNumber: 3}, NewComments: []linear.Comment{{Body: "rename it"}}}, "resume (address)", "b"},
 		{Candidate{Issue: is, Delivered: &store.Run{PRNumber: 1}, NewComments: []linear.Comment{{Body: "also log out"}}}, ModeFollowUp, "gosha/NXT-12-add-login"},
 		{Candidate{Issue: is, Delivered: &store.Run{PRNumber: 1}}, ModeFollowUp + ", blocked: no comment says what to change", "gosha/NXT-12-add-login"},
-		{Candidate{Issue: is, Delivered: &store.Run{PRNumber: 1}, NewComments: []linear.Comment{{Body: "/restart"}}}, ModeRestart, "gosha/NXT-12-add-login"},
 	}
 	for i, c := range cases {
 		d := Plan(project(t), states, []Candidate{c.c})[0]
@@ -131,5 +127,13 @@ skipped: NXT-14 · blocked by NXT-9 (In Progress)`
 	}
 	if got := Report("a1b2c3d", nil); got != "dry-run @ a1b2c3d · nothing Ready" {
 		t.Errorf("empty report = %q", got)
+	}
+}
+
+func TestBranchName(t *testing.T) {
+	for title, want := range map[string]string{"Add login": "gosha/NXT-12-add-login", "🔐": "gosha/NXT-12"} {
+		if got := branchName(linear.Issue{Identifier: "NXT-12", Title: title}); got != want {
+			t.Errorf("branchName(%q) = %q, want %q", title, got, want)
+		}
 	}
 }

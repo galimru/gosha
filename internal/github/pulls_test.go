@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -88,5 +89,38 @@ func TestPullRequests(t *testing.T) {
 	}
 	if err := inst.ClosePR(ctx, 5); err != nil || closed.Load() != 1 {
 		t.Errorf("ClosePR: %v", err)
+	}
+}
+
+func TestUpdateBranch(t *testing.T) {
+	status, msg := http.StatusAccepted, ""
+	inst := installation(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method+" "+r.URL.Path != "PUT /repos/o/r/pulls/5/update-branch" {
+			return false
+		}
+		var body map[string]string
+		json.NewDecoder(r.Body).Decode(&body)
+		if body["expected_head_sha"] != "abc" {
+			t.Errorf("update body %v", body)
+		}
+		w.WriteHeader(status)
+		w.Write([]byte(`{"message": "` + msg + `"}`))
+		return true
+	})
+	ctx := context.Background()
+	if err := inst.UpdateBranch(ctx, 5, "abc"); err != nil {
+		t.Fatalf("202: %v", err)
+	}
+	status, msg = http.StatusUnprocessableEntity, "merge conflict between base and head"
+	if err := inst.UpdateBranch(ctx, 5, "abc"); !errors.Is(err, ErrConflict) {
+		t.Errorf("conflict: %v", err)
+	}
+	msg = "expected head sha didn't match current head ref."
+	if err := inst.UpdateBranch(ctx, 5, "abc"); !errors.Is(err, ErrHeadMoved) {
+		t.Errorf("head moved: %v", err)
+	}
+	status = http.StatusForbidden
+	if err := inst.UpdateBranch(ctx, 5, "abc"); err == nil || errors.Is(err, ErrConflict) || errors.Is(err, ErrHeadMoved) {
+		t.Errorf("403: %v", err)
 	}
 }
