@@ -338,6 +338,20 @@ func (n issueNode) issue() Issue {
 	return is
 }
 
+// Issue fetches one issue by id or identifier (e.g. "NXT-12").
+func (c *Client) Issue(ctx context.Context, id string) (*Issue, error) {
+	const q = `query($id: String!) { issue(id: $id) { ` + issueFields + ` } }`
+	var out struct{ Issue *issueNode }
+	if err := c.do(ctx, q, map[string]any{"id": id}, &out); err != nil {
+		return nil, err
+	}
+	if out.Issue == nil {
+		return nil, fmt.Errorf("linear: issue %s not found", id)
+	}
+	is := out.Issue.issue()
+	return &is, nil
+}
+
 // IssuesInState lists every issue of a team in a state.
 func (c *Client) IssuesInState(ctx context.Context, teamID, stateID string) ([]Issue, error) {
 	const q = `query($team: ID!, $state: ID!, $after: String) {

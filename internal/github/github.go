@@ -84,15 +84,21 @@ func (a *App) Installation(ctx context.Context, repo gitx.GitHubRepo) (*Installa
 	}
 	tr := ghinstallation.NewFromAppsTransport(a.atr, inst.GetID())
 	tr.BaseURL = a.baseURL
-	return &Installation{ID: inst.GetID(), Repo: repo, tr: tr}, nil
+	base := a.baseURL + "/"
+	api, err := gh.NewClient(gh.WithTransport(tr), gh.WithURLs(&base, nil))
+	if err != nil {
+		return nil, err
+	}
+	return &Installation{ID: inst.GetID(), Repo: repo, tr: tr, api: api}, nil
 }
 
-// Installation issues installation tokens for one repo. Tokens last 1h and
+// Installation acts on one repo with installation tokens. Tokens last 1h and
 // are cached and refreshed by ghinstallation.
 type Installation struct {
 	ID   int64
 	Repo gitx.GitHubRepo
 	tr   *ghinstallation.Transport
+	api  *gh.Client
 }
 
 // Token returns a valid installation token, for git over HTTPS.

@@ -47,7 +47,14 @@ Throwaway code. The goal is answers, not features. Any "no" updates DESIGN.md be
 
 ## M2 — Ticket → PR
 
-- gitx: worktrees, push with an injected App token (bare clone and fetch landed in M1)
+**Status: built** (2026-10-18), pending the end-to-end check below on a real project. Behaviour that is specific to M2, until review, checks and merge exist:
+- **After the PR opens,** the ticket stays In Progress and the run parks at step `review` for M3. A parked run doesn't keep the project busy, so the next Ready ticket is picked up.
+- **Resume** (Ready with an open run) continues the implementer session in the existing checkout only when no PR exists yet. With an open PR the ticket goes Blocked ("arrives in M3"). A PR merged by hand makes the next Ready a follow-up; a PR closed unmerged restarts.
+- **Interrupted runs** (usage limit, Ctrl-C) leave the ticket In Progress; the next `gosha run` continues them before picking up anything new.
+
+Changes from the plan: the ticket "worktree" is a self-contained local clone (DESIGN §8.2), and the sandbox and permission rules take different shapes (DESIGN §7.1, SPIKES §1i).
+
+- gitx: ticket checkouts, push with an injected App token (bare clone and fetch landed in M1)
 - GitHub API client (go-github) for PRs (App auth landed in M1)
 - Claude runner as validated in M0 (generated settings, `dontask` allowlist, sandbox, scrubbed env, process group), implementer prompt (`implement.md` default + repo override), result contract
 - Branch name template, PR creation, Linear attachment, In Progress → Blocked on failure

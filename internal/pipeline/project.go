@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
+	"github.com/galimru/gosha/internal/agent"
 	"github.com/galimru/gosha/internal/config"
 	"github.com/galimru/gosha/internal/github"
 	"github.com/galimru/gosha/internal/gitx"
@@ -23,6 +25,20 @@ type Env struct {
 	Notify   notify.Notifier
 	Log      *slog.Logger
 	Redactor *config.Redactor
+	// ClaudeBinary is the claude executable; "claude" from PATH if empty.
+	ClaudeBinary string
+	// Implement runs the implementer: agent.Implement unless replaced in tests.
+	Implement func(context.Context, agent.Spec, string) (*agent.ImplementerResult, *agent.Outcome, error)
+
+	botMu sync.Mutex
+	bot   *agent.Identity
+}
+
+func (e *Env) implement(ctx context.Context, s agent.Spec, resultFile string) (*agent.ImplementerResult, *agent.Outcome, error) {
+	if e.Implement != nil {
+		return e.Implement(ctx, s, resultFile)
+	}
+	return agent.Implement(ctx, s, resultFile)
 }
 
 // Project is a project with its config freshly loaded from the default branch.

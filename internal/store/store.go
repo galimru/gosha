@@ -103,24 +103,47 @@ type Run struct {
 	ReviewRound int
 	CheckRound  int
 	ImplSession string
-	Outcome     string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	BaseBranch  string
+	PRURL       string
+	// BlockedReason is why the run last went Blocked, while it's blocked.
+	BlockedReason string
+	// AgentRuns counts agent passes, numbering the transcripts.
+	AgentRuns int
+	Outcome   string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // CreateRun records a new open run and sets its ID.
 func (s *Store) CreateRun(ctx context.Context, r *Run) error {
 	ts := now()
 	res, err := s.db.ExecContext(ctx, `INSERT INTO runs
-		(project, ticket_id, mode, branch, pr_number, step, review_round, check_round, impl_session, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.Project, r.TicketID, r.Mode, r.Branch, r.PRNumber, r.Step, r.ReviewRound, r.CheckRound, r.ImplSession, ts, ts)
+		(project, ticket_id, mode, branch, pr_number, step, review_round, check_round, impl_session,
+		 base_branch, pr_url, blocked_reason, agent_runs, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.Project, r.TicketID, r.Mode, r.Branch, r.PRNumber, r.Step, r.ReviewRound, r.CheckRound, r.ImplSession,
+		r.BaseBranch, r.PRURL, r.BlockedReason, r.AgentRuns, ts, ts)
 	if err != nil {
 		return fmt.Errorf("create run: %w", err)
 	}
 	r.ID, err = res.LastInsertId()
 	r.CreatedAt, r.UpdatedAt = parseTime(ts), parseTime(ts)
 	return err
+}
+
+// UpdateRun saves a run's mutable fields.
+func (s *Store) UpdateRun(ctx context.Context, r *Run) error {
+	ts := now()
+	_, err := s.db.ExecContext(ctx, `UPDATE runs SET mode = ?, branch = ?, pr_number = ?, step = ?, review_round = ?,
+		check_round = ?, impl_session = ?, base_branch = ?, pr_url = ?, blocked_reason = ?, agent_runs = ?, updated_at = ?
+		WHERE id = ?`,
+		r.Mode, r.Branch, r.PRNumber, r.Step, r.ReviewRound, r.CheckRound, r.ImplSession,
+		r.BaseBranch, r.PRURL, r.BlockedReason, r.AgentRuns, ts, r.ID)
+	if err != nil {
+		return fmt.Errorf("update run: %w", err)
+	}
+	r.UpdatedAt = parseTime(ts)
+	return nil
 }
 
 // FinishRun closes a run with an outcome.
@@ -130,13 +153,15 @@ func (s *Store) FinishRun(ctx context.Context, id int64, outcome string) error {
 	return err
 }
 
-const runColumns = `id, project, ticket_id, mode, branch, pr_number, step, review_round, check_round, impl_session, outcome, created_at, updated_at`
+const runColumns = `id, project, ticket_id, mode, branch, pr_number, step, review_round, check_round, impl_session,
+	base_branch, pr_url, blocked_reason, agent_runs, outcome, created_at, updated_at`
 
 func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 	var r Run
 	var created, updated string
 	err := row.Scan(&r.ID, &r.Project, &r.TicketID, &r.Mode, &r.Branch, &r.PRNumber, &r.Step,
-		&r.ReviewRound, &r.CheckRound, &r.ImplSession, &r.Outcome, &created, &updated)
+		&r.ReviewRound, &r.CheckRound, &r.ImplSession, &r.BaseBranch, &r.PRURL, &r.BlockedReason, &r.AgentRuns,
+		&r.Outcome, &created, &updated)
 	if err != nil {
 		return nil, err
 	}
@@ -168,6 +193,25 @@ func (s *Store) OpenRuns(ctx context.Context) ([]*Run, error) {
 			return nil, err
 		}
 		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// Branches lists every branch Gosha has used in a project, for the rule
+// that it never takes over a branch it doesn't own (DESIGN §8.2).
+func (s *Store) Branches(ctx context.Context, project string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT branch FROM runs WHERE project = ? AND branch != ''`, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var b string
+		if err := rows.Scan(&b); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
 	}
 	return out, rows.Err()
 }
