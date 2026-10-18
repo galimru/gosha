@@ -177,7 +177,7 @@ Secrets are referenced with `${VAR}` (§5.4).
 **Invalid or missing config: fail closed.** Gosha never keeps running a project on an outdated config.
 - **Invalid config** (bad YAML, failed validation, a missing secret variable): the project goes **paused**. No new tickets are picked up. A ticket already in flight stops at the next step boundary and stays In Progress, so it can resume.
 - **Telegram** gets one message naming the commit and the error, and another when the project recovers. `gosha status` shows the reason.
-- **Recovery:** as soon as a valid config lands on the default branch, the project resumes, including any paused ticket.
+- **Recovery:** as soon as a valid config lands on the default branch (and the Linear and Notion checks pass too), the project resumes, including any paused ticket.
 - **`.gosha/config.yaml` removed from the default branch:** treated the same way, the project is paused.
 - **GitHub unreachable** (fetch fails): not a config problem. Nothing can be pushed or merged anyway, so the project waits and retries.
 
@@ -246,7 +246,7 @@ The binary embeds default templates, and any file present in the repo overrides 
 | `.Ticket.Description` | markdown | prompts |
 | `.Ticket.URL` | Linear link | prompts |
 | `.Ticket.Comments` | human comments since the last run | prompts |
-| `.Context.Dir` / `.Context.Index` | path to the mirror / contents of `INDEX.md` | prompts |
+| `.Context.Dir` / `.Context.Index` | path to this pickup's frozen copy of the mirror (§6.2) / contents of its `INDEX.md` | prompts |
 | `.Branch` / `.BaseBranch` | `gosha/NXT-12-add-login` / `main` | prompts |
 | `.Diff` | diff against the base (cut at 100 KB) | review |
 | `.Feedback.Review` / `.Feedback.CI` | review comments and human PR feedback / failed checks with the failing step of each job log | address |
@@ -685,7 +685,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - `gosha auth status`: checks every identity and shows who Gosha acts as: GitHub App + installations, Linear actor, Notion bot + shared root pages, Telegram bot + channel, Claude token
 - `gosha validate [project]`: config, credentials, Linear states, Notion access
 - `gosha doctor`: host checks (git, claude, PATH tools, permissions)
-- `gosha status`: projects, active or paused state (and why), current ticket and step, usage-limit pause
+- `gosha status`: projects, active or paused state (and why), the context mirror (pages, last refresh), current ticket and step, usage-limit pause
 - `gosha logs [-f] [--project nextdesk]`
 - `gosha context refresh <project>`: pull the latest from the context source (Notion) into the local mirror
 - `gosha context path <project>`: print where the mirror lives
