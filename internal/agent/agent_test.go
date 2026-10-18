@@ -248,7 +248,7 @@ func TestSettings(t *testing.T) {
 		Home: home, Checkout: filepath.Join(home, "projects/demo/worktrees/NXT-1"),
 		RunDir: filepath.Join(home, "projects/demo/runs/NXT-1/3"), UserHome: "/u", Writable: []string{"~/.cargo", "/opt/x"},
 	}
-	data, err := Settings(p, true)
+	data, err := Settings(p, RoleImplementer, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func TestSettings(t *testing.T) {
 		t.Errorf("sandbox = %+v", s.Sandbox)
 	}
 
-	data, _ = Settings(p, false)
+	data, _ = Settings(p, RoleImplementer, false)
 	if strings.Contains(string(data), `"sandbox"`) {
 		t.Errorf("sandbox block with sandbox off:\n%s", data)
 	}

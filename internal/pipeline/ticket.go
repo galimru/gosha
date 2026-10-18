@@ -597,7 +597,7 @@ func (t *ticket) runPaths(n int) (runPaths, error) {
 	if err := rp.agent.EnsureDirs(); err != nil {
 		return runPaths{}, err
 	}
-	data, err := agent.Settings(rp.agent, t.e.Global.Agent.SandboxEnabled())
+	data, err := agent.Settings(rp.agent, agent.RoleImplementer, t.e.Global.Agent.SandboxEnabled())
 	if err != nil {
 		return runPaths{}, err
 	}
