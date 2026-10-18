@@ -134,15 +134,16 @@ func (t *ticket) afterMerge(ctx context.Context) error {
 	if err := os.RemoveAll(t.workspace().Dir); err != nil {
 		return err
 	}
-	if t.p.Config.Deploy.Workflow != "" && !t.report.Deploy.ok() {
+	if t.p.Config.Deploy.Workflow != "" && t.report.Deploy == nil {
 		return t.deployWatch(ctx)
 	}
 	return t.deliver(ctx)
 }
 
-// deployWatch waits for the deploy workflow's run on the merge commit
-// (DESIGN §8.7). The code is merged already, so a failure goes Blocked for
-// a human to see; moving the ticket to Ready looks at the deploy again.
+// deployWatch waits for the deploy workflow's run on the merge commit and
+// records how it went (DESIGN §8.7). The code is merged already, so the
+// ticket is delivered either way: the Delivered comment reports the deploy,
+// and a failure is fixed through a follow-up.
 func (t *ticket) deployWatch(ctx context.Context) error {
 	if err := t.save(ctx, StepDeploy); err != nil {
 		return err
@@ -162,37 +163,27 @@ func (t *ticket) deployWatch(ctx context.Context) error {
 			return err
 		}
 	}
-	const need = "the code is already merged. Once the deploy is fixed or re-run, move the ticket to Ready and I'll check it again. " +
-		"To have me change the code instead, comment what to change and move the ticket to Ready for a follow-up pull request."
-	wf := "`" + cfg.Workflow + "`"
 	switch {
 	case run == nil:
-		return t.blockWith(ctx, fmt.Sprintf("No run of %s started for the merge commit `%.7s` on `%s` within `deploy.timeout` (%v). "+
-			"Check that the workflow runs on pushes to `%s`.", wf, t.run.MergeSHA, t.run.BaseBranch, cfg.Timeout, t.run.BaseBranch), nil, need)
+		t.report.Deploy = &deployResult{Conclusion: "no run",
+			Failure: fmt.Sprintf("No run of `%s` started for the merge commit within `deploy.timeout` (%v).", cfg.Workflow, cfg.Timeout)}
 	case run.Status != "completed":
-		return t.blockWith(ctx, fmt.Sprintf("The deploy (%s) was still running after `deploy.timeout` (%v): %s", wf, cfg.Timeout, run.URL), nil, need)
-	}
-	t.report.Deploy = &deployResult{Conclusion: run.Conclusion, URL: run.URL}
-	if run.Conclusion != "success" {
-		t.report.Deploy.Failure = t.deployFailure(ctx, run)
-		if err := t.save(ctx, StepDeploy); err != nil {
-			return err
+		t.report.Deploy = &deployResult{Conclusion: "still running", URL: run.URL,
+			Failure: fmt.Sprintf("Still running after `deploy.timeout` (%v).", cfg.Timeout)}
+	default:
+		t.report.Deploy = &deployResult{Conclusion: run.Conclusion, URL: run.URL}
+		if run.Conclusion != "success" {
+			t.report.Deploy.Failure = t.deployFailure(ctx, run)
 		}
-		t.notify(fmt.Sprintf("%s · deploy ❌ %s", t.issue.Identifier, run.Conclusion), notify.Link{Text: "run", URL: run.URL})
-		reason := fmt.Sprintf("The deploy (%s) ended with `%s`: %s", wf, run.Conclusion, run.URL)
-		if f := t.report.Deploy.Failure; f != "" {
-			reason += "\n\n" + f
-		}
-		return t.blockWith(ctx, reason, nil, need)
 	}
 	if err := t.save(ctx, StepDeploy); err != nil {
 		return err
 	}
-	where := cfg.URL
-	if where == "" {
-		where = run.URL
+	mark := "✅"
+	if !t.report.Deploy.ok() {
+		mark = "❌"
 	}
-	t.notify(fmt.Sprintf("%s · deploy ✅ %s", t.issue.Identifier, where), notify.Link{Text: "run", URL: run.URL})
+	t.notify(fmt.Sprintf("%s · deploy %s %s", t.issue.Identifier, mark, t.report.Deploy.Conclusion), notify.Link{Text: "run", URL: t.report.Deploy.URL})
 	return t.deliver(ctx)
 }
 
@@ -285,9 +276,23 @@ func (t *ticket) deliveredComment() string {
 
 	if dep := d.Deploy; dep != nil {
 		b.WriteString("\n**Deployment**\n")
-		fmt.Fprintf(&b, "- `%s` %s: %s\n", t.p.Config.Deploy.Workflow, dep.Conclusion, dep.URL)
-		if u := t.p.Config.Deploy.URL; u != "" {
+		mark := "✅"
+		if !dep.ok() {
+			mark = "❌"
+		}
+		fmt.Fprintf(&b, "- %s `%s` %s", mark, t.p.Config.Deploy.Workflow, dep.Conclusion)
+		if dep.URL != "" {
+			b.WriteString(": " + dep.URL)
+		}
+		b.WriteString("\n")
+		if u := t.p.Config.Deploy.URL; u != "" && dep.ok() {
 			b.WriteString("- " + u + "\n")
+		}
+		if !dep.ok() {
+			if dep.Failure != "" {
+				b.WriteString("\n" + red(dep.Failure) + "\n")
+			}
+			b.WriteString("\nThe code is merged. To have Gosha fix the deploy, comment what to change and move the ticket to Ready for a follow-up.\n")
 		}
 	}
 	writeList(&b, "Assumptions", d.Assumptions, red)

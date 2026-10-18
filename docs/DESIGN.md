@@ -89,7 +89,7 @@ State names default to the ones above (`Ready`, `In Progress`, `In Review`, `Blo
    - a 2–4 line summary of what changed and why (the implementer's first summary)
    - the PR link and diff size
    - how it was checked: what the implementer ran, each review round with its findings (and that they were addressed), check and conflict fix rounds, the checks that passed
-   - deployment: workflow result + URL, if configured
+   - deployment, if configured: ✅ or ❌ with the workflow run, and for a failure the failing step
    - assumptions made, and anything deliberately left out (the implementer's `assumptions` and `left_out`, from every pass)
 
   What it reports is recorded on the run as the pipeline goes, so a delivery that resumes after a restart still has all of it.
@@ -419,7 +419,6 @@ Humans instruct Gosha only through Linear (§1.4): comments on the PR are for pe
 5. Decide the mode:
    - an open Gosha PR exists → **resume**: the round limit resets; new ticket comments go to an **address** pass first, otherwise the PR gets a fresh review (§8.3)
    - the ticket's last PR was merged, by Gosha or by hand → **follow-up**: a fresh run on a new branch with suffix `-2`, `-3`, …, whose implementer is told about the earlier PR (`.FollowUp`) and that the new comments say what to change. A follow-up with no new human comment goes **Blocked** at once, asking what to change; no agent runs.
-   - a run Blocked after its merge (the deploy failed): with new comments → finish that run and start a **follow-up**; without → look at the deploy again (§8.7)
    - the ticket's PR was closed without merging → delete the branch → **fresh**
    - otherwise → **fresh**
 
@@ -493,10 +492,12 @@ For the PR's **head SHA**:
 
 ### 8.7 Deploy watch (if configured)
 Find the newest run of the `deploy.workflow` file for the merge commit (`head_sha`) on the base branch, polling every ~15s, and wait for it to finish (up to `deploy.timeout`). Like waiting for checks, this doesn't spend `agent.timeout`. A re-run keeps the run's id, so the newest attempt is what counts.
-- Success → report the result + URL in the Delivered comment.
-- Failure → **Blocked** with the failed jobs and the failing step of each job's log (as for checks, §8.4). The code is already merged, so a human needs to see this.
-- No run within `deploy.timeout`, or still running → **Blocked**, naming the workflow and the merge commit.
-- **Ready again:** with no new comment, Gosha looks at the deploy again (a human may have fixed or re-run it): success → deliver, still failing → Blocked again. With a comment, it's a follow-up PR on the merged code (§8.1), and the implementer is shown the failure.
+The ticket is **delivered whatever the outcome**: CI/CD owns the deploy (§1.1), and the code is already merged. The Delivered comment reports it:
+- Success → ✅, the run and `deploy.url`.
+- Failure → ❌, the run, and the failed jobs with the failing step of each job's log (as for checks, §8.4).
+- No run within `deploy.timeout`, or still running → ❌, naming the workflow.
+
+A failed deploy is fixed like any other problem with shipped work: a human comments what to change and moves the ticket to Ready, which opens a follow-up PR (§8.1) whose implementer is shown the failure. A deploy that just needs a re-run needs nothing from Gosha.
 - `gosha validate` fails when `.github/workflows/<deploy.workflow>` isn't in the repo.
 
 ### 8.8 Deliver
@@ -716,7 +717,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - A project resumes only after the config, Linear and Notion checks all pass, so a pause for one reason isn't cleared by another check passing. (M5)
 - Pages linked from tickets but outside the tree (`_linked/`) are deferred. (M5)
 - A ticket whose last PR was merged (by Gosha or by hand) is a follow-up when it's Ready again: a new branch, and the implementer is told about the earlier PR. A follow-up with no new human comment goes Blocked without running an agent. (M6)
-- The deploy is found by the merge commit's `head_sha` on the base. A failed deploy goes Blocked; Ready without a comment looks at the deploy again, Ready with a comment opens a follow-up. (M6)
+- The deploy is found by the merge commit's `head_sha` on the base. (M6) A failed deploy is reported (❌) in the Delivered comment rather than blocking the ticket; a follow-up fixes it. (M7)
 - The Delivered comment's contents are recorded on the run as they're gathered (implementer results, each posted review, fix rounds, checks, diff, deploy). The implementer result has an optional `left_out` list. (M6)
 - Ticket comments written during a pickup reach its next implementer pass. (M6) There's no `/restart` command: closing the PR on GitHub and moving the ticket to Ready starts over. (M7)
 - `gosha validate` is an offline check of a repo's config, so it can run in the project's CI; `gosha doctor` checks everything about the host, including credentials, Linear and Notion. (M7)

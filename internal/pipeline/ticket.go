@@ -315,19 +315,8 @@ func (t *ticket) drive(ctx context.Context) error {
 			return err
 		}
 		switch {
-		case pr.Merged && t.run.MergeSHA != "" && t.fromReady && len(instructions(t.comments)) > 0:
-			// Blocked after the merge (its deploy failed), and a human asked
-			// for a change: that's a follow-up on the merged code.
-			if err := t.e.Store.FinishRun(ctx, t.run.ID, OutcomeDelivered); err != nil {
-				return err
-			}
-			t.prev = t.run
-			if err := t.newRun(ctx, ModeFollowUp); err != nil {
-				return err
-			}
 		case pr.Merged && t.run.MergeSHA != "":
-			// Gosha merged it and stopped before delivering, or its deploy
-			// is to be checked again.
+			// Gosha merged it and stopped before delivering.
 			return t.afterMerge(ctx)
 		case pr.Merged:
 			if err := t.e.Store.FinishRun(ctx, t.run.ID, OutcomeMerged); err != nil {

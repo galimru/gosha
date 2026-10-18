@@ -6,14 +6,6 @@ When a point is implemented, the PR that implements it merges it into DESIGN.md 
 
 Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejected** (kept as is, with the reason).
 
-## 4. Report the deploy instead of blocking on it
-
-**Status:** agreed
-
-**Today (§8.1, §8.7):** a failed deploy moves a merged ticket to Blocked, which adds a "blocked after merge" pickup mode and "Ready without a comment re-checks the deploy".
-
-**Change:** always deliver; the Delivered comment says deploy ✅/❌ with a link. A failed deploy is handled by the normal follow-up (comment → Ready). §1.1 already says CI/CD owns deploy.
-
 ## 6. One round budget
 
 **Status:** rejected

@@ -42,67 +42,45 @@ func TestDeployWatched(t *testing.T) {
 	if h.onUpstream(r.Branch) {
 		t.Error("branch not deleted")
 	}
-	for _, want := range []string{"**Deployment**", "`deploy.yml` success: https://run/5", "- https://demo.example.com"} {
+	for _, want := range []string{"**Deployment**", "✅ `deploy.yml` success: https://run/5", "- https://demo.example.com"} {
 		if !strings.Contains(h.lin.comments[0], want) {
 			t.Errorf("Delivered comment missing %q:\n%s", want, h.lin.comments[0])
 		}
 	}
-	if ev := strings.Join(h.events.take(), "\n"); !strings.Contains(ev, "deploy ✅ https://demo.example.com") {
+	if ev := strings.Join(h.events.take(), "\n"); !strings.Contains(ev, "deploy ✅ success") {
 		t.Errorf("events:\n%s", ev)
 	}
 }
 
-func TestDeployFailureBlocksThenRechecks(t *testing.T) {
+func TestDeployFailureDeliversThenFollowsUp(t *testing.T) {
 	h := deployHarness(t)
 	h.prs.deploys = deployed("failure")
 	h.prs.jobs = []github.Job{{ID: 1, Name: "build", Conclusion: "success"}, {ID: 9, Name: "ship", Conclusion: "failure"}}
-	h.prs.logs = map[int64]string{9: "##[group]Run ./ship.sh\nshipping\n##[error]connection refused\n##[group]Post job cleanup\n"}
+	h.prs.logs = map[int64]string{9: "##[group]Run ./ship.sh\nshipping\n##[error]missing DEPLOY_ENV\n##[group]Post job cleanup\n"}
 	if err := h.pickup(); err != nil {
 		t.Fatal(err)
 	}
-	r := h.run()
-	if r.Step != StepBlocked || h.lin.state() != states.Blocked.ID || r.MergeSHA == "" {
-		t.Fatalf("run = %+v, linear %+v", r, h.lin)
+	first := h.lastRun()
+	if first.Outcome != OutcomeDelivered || h.lin.state() != states.InReview.ID {
+		t.Fatalf("run = %+v, linear %+v", first, h.lin)
 	}
 	c := h.lin.comments[0]
-	for _, want := range []string{"while watching the deploy", "ended with `failure`: https://run/5", "**ship** (failure)", "connection refused", "the code is already merged"} {
+	for _, want := range []string{"❌ `deploy.yml` failure: https://run/5", "**ship** (failure)", "missing DEPLOY_ENV", "for a follow-up"} {
 		if !strings.Contains(c, want) {
-			t.Errorf("Blocked comment missing %q:\n%s", want, c)
+			t.Errorf("Delivered comment missing %q:\n%s", want, c)
 		}
 	}
-	if strings.Contains(c, "**build**") {
-		t.Errorf("Blocked comment lists a passing job:\n%s", c)
+	if strings.Contains(c, "**build**") || strings.Contains(c, "https://demo.example.com") {
+		t.Errorf("Delivered comment lists a passing job or the deploy URL:\n%s", c)
 	}
-	// Someone re-ran the deploy; Ready with no comment looks again.
-	h.prs.deploys = func(int, string) *github.WorkflowRun {
-		return &github.WorkflowRun{ID: 5, Status: "completed", Conclusion: "success", URL: "https://run/5"}
-	}
-	if err := h.pickup(); err != nil {
-		t.Fatal(err)
-	}
-	last := h.lastRun()
-	if last.ID != r.ID || last.Outcome != OutcomeDelivered || h.lin.state() != states.InReview.ID || len(h.agent.calls) != 1 || len(h.prs.merged) != 1 {
-		t.Errorf("run = %+v, linear %+v, %d agent calls", last, h.lin, len(h.agent.calls))
-	}
-	if !strings.Contains(h.lin.comments[1], "`deploy.yml` success") {
-		t.Errorf("Delivered comment = %s", h.lin.comments[1])
-	}
-}
 
-func TestDeployFailureWithCommentFollowsUp(t *testing.T) {
-	h := deployHarness(t)
-	h.prs.deploys = deployed("failure")
-	h.prs.jobs = []github.Job{{ID: 9, Name: "ship", Conclusion: "failure"}}
-	h.prs.logs = map[int64]string{9: "##[group]Run ./ship.sh\n##[error]missing DEPLOY_ENV\n"}
-	h.pickup()
-	first := h.run()
+	// A human asks for a fix: a follow-up on the merged code.
 	h.prs.deploys = deployed("success")
 	if err := h.pickup(linear.Comment{ID: "c1", Body: "Set DEPLOY_ENV in the script.", Human: true, CreatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	prev, _ := h.env.Store.LastDelivered(h.ctx, "demo", "NXT-12")
 	r := h.lastRun()
-	if r.ID == first.ID || r.Mode != ModeFollowUp || r.Outcome != OutcomeDelivered || r.Branch != "gosha/NXT-12-add-login-2" || prev.ID != r.ID {
+	if r.ID == first.ID || r.Mode != ModeFollowUp || r.Outcome != OutcomeDelivered || r.Branch != "gosha/NXT-12-add-login-2" {
 		t.Fatalf("follow-up run = %+v", r)
 	}
 	p := h.agent.calls[1].Prompt
@@ -116,31 +94,39 @@ func TestDeployFailureWithCommentFollowsUp(t *testing.T) {
 	}
 }
 
-func TestNoDeployRunBlocks(t *testing.T) {
+func TestNoDeployRunDelivers(t *testing.T) {
 	h := deployHarness(t)
 	if err := h.pickup(); err != nil {
 		t.Fatal(err)
 	}
-	if r := h.run(); r.Step != StepBlocked || !strings.Contains(r.BlockedReason, "No run of `deploy.yml` started for the merge commit") {
-		t.Errorf("run = %+v", r)
+	if r := h.lastRun(); r.Outcome != OutcomeDelivered || !strings.Contains(h.lin.comments[0], "❌ `deploy.yml` no run") ||
+		!strings.Contains(h.lin.comments[0], "No run of `deploy.yml` started for the merge commit") {
+		t.Errorf("run = %+v, comment:\n%s", r, h.lin.comments[0])
 	}
 }
 
 func TestInterruptedDeployWatchResumes(t *testing.T) {
 	h := deployHarness(t)
-	h.pickup()
-	h.prs.deploys = deployed("success")
-	// Gosha stopped while watching: the ticket is still In Progress.
+	// Gosha stops while watching: the ticket stays In Progress.
+	h.prs.deploys = func(int, string) *github.WorkflowRun {
+		h.prs.stopped = true
+		h.prs.stop()
+		return nil
+	}
+	if err := h.pickup(); err != nil {
+		t.Fatal(err)
+	}
 	r := h.run()
-	r.Step = StepDeploy
-	r.BlockedReason = ""
-	h.env.Store.UpdateRun(h.ctx, r)
+	if r.Step != StepDeploy || r.MergeSHA == "" {
+		t.Fatalf("run = %+v", r)
+	}
+	h.prs.deploys, h.prs.deployCalls = deployed("success"), 0
 	h.issue.State = states.InProgress
 	if err := h.pickup(); err != nil {
 		t.Fatal(err)
 	}
-	if last := h.lastRun(); last.ID != r.ID || last.Outcome != OutcomeDelivered {
-		t.Errorf("run = %+v", last)
+	if last := h.lastRun(); last.ID != r.ID || last.Outcome != OutcomeDelivered || !strings.Contains(h.lin.comments[0], "✅ `deploy.yml` success") {
+		t.Errorf("run = %+v, comments %v", last, h.lin.comments)
 	}
 }
 
