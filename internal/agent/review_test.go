@@ -123,6 +123,16 @@ func TestReviewAndAddressPrompts(t *testing.T) {
 			t.Errorf("address prompt missing %q:\n%s", want, got)
 		}
 	}
+	if strings.Contains(got, "# Failed checks") || strings.Contains(got, "# Merge conflicts") {
+		t.Error("CI sections without CI feedback")
+	}
+	d.Feedback = tmpl.Feedback{CI: "### test\n\nFAIL TestLogin", Conflicts: "- `a.go`"}
+	got, _ = RenderPrompt(context.Background(), repo, "HEAD", "address.md", d)
+	for _, want := range []string{"# Failed checks", "FAIL TestLogin", "git merge origin/main", "- `a.go`"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("address prompt missing %q:\n%s", want, got)
+		}
+	}
 	// Round 1: no previous-round section.
 	d.Round, d.Feedback.Previous = 1, ""
 	got, _ = RenderPrompt(context.Background(), repo, "HEAD", "review.md", d)
