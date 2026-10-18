@@ -244,16 +244,17 @@ func TestParseImplementer(t *testing.T) {
 
 func TestSettings(t *testing.T) {
 	home := t.TempDir()
-	for _, d := range []string{"projects/demo/repo", "projects/demo/worktrees/NXT-1", "projects/demo/worktrees/NXT-2",
-		"projects/demo/runs/NXT-1/3", "projects/other", "logs"} {
+	ws := filepath.Join(home, "workspaces/demo/NXT-1")
+	for _, d := range []string{"projects/demo/repo", "projects/demo/runs/NXT-1", "logs", "workspaces/demo/NXT-2/checkout",
+		"workspaces/demo/NXT-1/checkout", "workspaces/demo/NXT-1/tmp/3"} {
 		os.MkdirAll(filepath.Join(home, d), 0o700)
 	}
-	for _, f := range []string{"secrets.env", "gosha.db", "projects/demo/secrets.env", "projects/demo/runs/NXT-1/3-implement.jsonl"} {
+	for _, f := range []string{"config.yaml", "secrets.env", "github-app.pem", "gosha.db", "gosha.db-wal", "something-new"} {
 		os.WriteFile(filepath.Join(home, f), nil, 0o600)
 	}
 	p := Paths{
-		Home: home, Checkout: filepath.Join(home, "projects/demo/worktrees/NXT-1"),
-		RunDir: filepath.Join(home, "projects/demo/runs/NXT-1/3"), UserHome: "/u", Writable: []string{"~/.cargo", "/opt/x"},
+		Home: home, Workspace: ws, Checkout: filepath.Join(ws, "checkout"), RunDir: filepath.Join(ws, "tmp/3"),
+		UserHome: "/u", Writable: []string{"~/.cargo", "/opt/x"},
 	}
 	data, err := Settings(p, RoleImplementer, true)
 	if err != nil {
@@ -271,25 +272,26 @@ func TestSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	denied := func(rel string) bool {
-		return slices.Contains(s.Permissions.Deny, "Read(/"+filepath.Join(home, rel)+")")
+		path := filepath.Join(home, rel)
+		return slices.Contains(s.Permissions.Deny, "Read(/"+path+"/**)") && slices.Contains(s.Permissions.Deny, "Edit(/"+path+"/**)")
 	}
-	for _, rel := range []string{"secrets.env", "gosha.db", "logs", "projects/other", "projects/demo/repo", "projects/demo/secrets.env",
-		"projects/demo/worktrees/NXT-2", "projects/demo/runs/NXT-1/3-implement.jsonl"} {
-		if !denied(rel) {
-			t.Errorf("%s not denied", rel)
+	// Every top-level entry but workspaces/ is denied, so a new one can't
+	// fail open.
+	entries, _ := os.ReadDir(home)
+	for _, e := range entries {
+		if e.Name() != "workspaces" && !denied(e.Name()) {
+			t.Errorf("%s not denied", e.Name())
 		}
 	}
-	for _, rel := range []string{"projects", "projects/demo", "projects/demo/worktrees/NXT-1", "projects/demo/runs/NXT-1/3"} {
-		if denied(rel) {
-			t.Errorf("%s denied", rel)
-		}
+	if denied("workspaces") {
+		t.Error("workspaces denied")
 	}
 	if !slices.Contains(s.Permissions.Allow, "Edit(/"+p.Checkout+"/**)") {
 		t.Errorf("checkout not editable: %v", s.Permissions.Allow)
 	}
 	fs := s.Sandbox.Filesystem
 	if !s.Sandbox.FailIfUnavailable || s.Sandbox.AllowUnsandboxedCommands || !slices.Equal(fs.DenyRead, []string{home}) ||
-		!slices.Contains(fs.AllowRead, p.Checkout) || !slices.Contains(fs.AllowWrite, "/u/.cargo") ||
+		!slices.Equal(fs.AllowRead, []string{ws}) || !slices.Contains(fs.AllowWrite, "/u/.cargo") ||
 		!slices.Contains(fs.AllowWrite, "/opt/x") || !slices.Contains(fs.AllowWrite, "/u/.cache") {
 		t.Errorf("sandbox = %+v", s.Sandbox)
 	}

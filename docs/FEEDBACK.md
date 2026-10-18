@@ -6,34 +6,6 @@ When a point is implemented, the PR that implements it merges it into DESIGN.md 
 
 Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejected** (kept as is, with the reason).
 
-## 1. Agent workspaces in their own folder
-
-**Status:** agreed
-
-**Today (§7.1, §11.3):** the agent's checkout, temp directory and frozen context live inside `projects/<project>/`, next to secrets, the database and the bare clone. Permission rules can't re-allow a path under a deny, so Gosha lists and denies every entry *around* the run's paths when the run starts.
-
-**Change:** agents only work in `workspaces/`. Folder names describe content, not agent visibility.
-
-```
-~/.gosha/
-├── config.yaml
-├── secrets.env
-├── github-app.pem
-├── gosha.db
-├── logs/
-├── projects/<project>/          # bare clone, Notion mirror, claude/ sessions, transcripts, settings
-└── workspaces/<project>/<ticket>/
-    ├── checkout/                # implementer's clone
-    ├── review/                  # reviewer's throwaway clone
-    ├── context/                 # frozen mirror copy for this pickup
-    └── tmp/<n>/                 # pass n: TMPDIR + result file
-```
-
-- **OS sandbox:** deny `~/.gosha`, re-allow this run's `workspaces/<project>/<ticket>/`.
-- **Permission rules:** a static deny of the top-level entries other than `workspaces/`; `Edit` allowed only in this run's `checkout/` and `tmp/`. A test asserts every top-level entry except `workspaces/` is denied, so a new one can't fail open.
-- **Trade-off:** the Read tool can see other tickets' workspaces (repo code, not credentials).
-- **Bonus:** everything in `workspaces/` can be rebuilt; cleanup is removing a ticket's folder, and a host move can skip it.
-
 ## 4. Report the deploy instead of blocking on it
 
 **Status:** agreed

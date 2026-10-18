@@ -97,7 +97,7 @@ func (a *app) removeCmd() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "remove <project>",
-		Short: "Unregister a project and delete its directory (clone, worktrees, context, transcripts)",
+		Short: "Unregister a project and delete its directory (clone, context, transcripts) and agent workspaces",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -112,8 +112,10 @@ func (a *app) removeCmd() *cobra.Command {
 					return errors.New("not confirmed")
 				}
 			}
-			if err := os.RemoveAll(pp.Dir); err != nil {
-				return err
+			for _, d := range []string{pp.Dir, filepath.Join(a.home.WorkspacesDir(), name)} {
+				if err := os.RemoveAll(d); err != nil {
+					return err
+				}
 			}
 			st, err := store.Open(cmd.Context(), a.home.DB())
 			if err != nil {

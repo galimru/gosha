@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/galimru/gosha/internal/agent"
+	"github.com/galimru/gosha/internal/config"
 	"github.com/galimru/gosha/internal/github"
 	"github.com/galimru/gosha/internal/gitx"
 	"github.com/galimru/gosha/internal/linear"
@@ -424,9 +425,12 @@ func (t *ticket) chooseBranch(ctx context.Context, reuse string) (string, error)
 	}
 }
 
-func (t *ticket) checkout() string {
-	return filepath.Join(t.e.Home.Project(t.p.Name).Worktrees(), t.issue.Identifier)
+// workspace is the ticket's agent workspace (DESIGN §11.3).
+func (t *ticket) workspace() config.Workspace {
+	return t.e.Home.Workspace(t.p.Name, t.issue.Identifier)
 }
+
+func (t *ticket) checkout() string { return t.workspace().Checkout() }
 
 func (t *ticket) save(ctx context.Context, step string) error {
 	t.run.Step = step
@@ -496,7 +500,7 @@ func (t *ticket) prepare(ctx context.Context, checkout, role string) (fresh bool
 	if err := t.save(ctx, t.run.Step); err != nil {
 		return false, rp, err
 	}
-	if rp, err = t.runPaths(t.run.AgentRuns, role, checkout); err != nil {
+	if rp, err = t.runPaths(t.run.AgentRuns, role); err != nil {
 		return false, rp, err
 	}
 	return fresh, rp, nil
@@ -705,9 +709,8 @@ type runPaths struct {
 	transcript string
 }
 
-func (t *ticket) runPaths(n int, role, checkout string) (runPaths, error) {
-	// The sandbox matches real paths, so resolve symlinks in the home.
-	home, err := filepath.EvalSymlinks(t.e.Home.Dir())
+func (t *ticket) runPaths(n int, role string) (runPaths, error) {
+	home, err := t.e.realHome()
 	if err != nil {
 		return runPaths{}, err
 	}
@@ -715,18 +718,24 @@ func (t *ticket) runPaths(n int, role, checkout string) (runPaths, error) {
 	if err != nil {
 		return runPaths{}, err
 	}
-	pp := filepath.Join(home, "projects", t.p.Name)
-	runs := filepath.Join(pp, "runs", t.issue.Identifier)
+	ws := home.Workspace(t.p.Name, t.issue.Identifier)
+	checkout := ws.Checkout()
+	if role == agent.RoleReviewer {
+		checkout = ws.Review()
+	}
+	runs := filepath.Join(home.Project(t.p.Name).Runs(), t.issue.Identifier)
 	rp := runPaths{
 		agent: agent.Paths{
-			Home: home, Checkout: filepath.Join(pp, "worktrees", filepath.Base(checkout)),
-			RunDir: filepath.Join(runs, fmt.Sprint(n)), Context: t.kb.Dir, UserHome: userHome, Writable: t.e.Global.Agent.Writable,
+			Home: home.Dir(), Workspace: ws.Dir, Checkout: checkout, RunDir: ws.Tmp(n),
+			Context: t.kb.Dir, UserHome: userHome, Writable: t.e.Global.Agent.Writable,
 		},
 		settings:   filepath.Join(runs, fmt.Sprintf("%d-settings.json", n)),
 		transcript: filepath.Join(runs, fmt.Sprintf("%d-%s.jsonl", n, role)),
 	}
-	if err := os.MkdirAll(t.e.Home.Project(t.p.Name).Claude(), 0o700); err != nil {
-		return runPaths{}, err
+	for _, d := range []string{runs, t.e.Home.Project(t.p.Name).Claude()} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			return runPaths{}, err
+		}
 	}
 	if err := rp.agent.EnsureDirs(); err != nil {
 		return runPaths{}, err

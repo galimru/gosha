@@ -139,7 +139,7 @@ func (t *ticket) review(ctx context.Context) (*agent.ReviewerResult, []github.Fe
 // reads the change there with git diff; in the sandbox it can't write the
 // clone (DESIGN §7).
 func (t *ticket) runReviewer(ctx context.Context, head string) (*agent.ReviewerResult, error) {
-	dir := t.checkout() + "-review"
+	dir := t.workspace().Review()
 	if err := os.RemoveAll(dir); err != nil {
 		return nil, err
 	}

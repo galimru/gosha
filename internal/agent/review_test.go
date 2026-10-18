@@ -65,9 +65,9 @@ echo '{"type":"result","subtype":"success","is_error":false,"session_id":"sess-r
 
 func TestReviewerSettings(t *testing.T) {
 	home := t.TempDir()
+	ws := filepath.Join(home, "workspaces/demo/NXT-1")
 	p := Paths{
-		Home: home, Checkout: filepath.Join(home, "projects/demo/worktrees/NXT-1-review"),
-		RunDir: filepath.Join(home, "projects/demo/runs/NXT-1/4"), UserHome: t.TempDir(),
+		Home: home, Workspace: ws, Checkout: filepath.Join(ws, "review"), RunDir: filepath.Join(ws, "tmp/4"), UserHome: t.TempDir(),
 	}
 	if err := p.EnsureDirs(); err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestReviewerSettings(t *testing.T) {
 		t.Errorf("reviewer can't run or read: %v", s.Permissions.Allow)
 	}
 	// Its Bash can read the clone but write only its run dir.
-	if fs := s.Sandbox.Filesystem; !slices.Contains(fs.AllowRead, p.Checkout) || !slices.Equal(fs.AllowWrite, []string{p.RunDir}) {
+	if fs := s.Sandbox.Filesystem; !slices.Equal(fs.AllowRead, []string{ws}) || !slices.Equal(fs.AllowWrite, []string{p.RunDir}) {
 		t.Errorf("reviewer sandbox: %+v", fs)
 	}
 }

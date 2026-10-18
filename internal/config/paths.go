@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -41,6 +42,10 @@ func (h Home) DB() string          { return filepath.Join(string(h), "gosha.db")
 func (h Home) LogFile() string     { return filepath.Join(string(h), "logs", "gosha.log") }
 func (h Home) ProjectsDir() string { return filepath.Join(string(h), "projects") }
 
+// WorkspacesDir holds every ticket's agent workspace: the only part of
+// the home agents can reach (DESIGN §7.1).
+func (h Home) WorkspacesDir() string { return filepath.Join(string(h), "workspaces") }
+
 // Path resolves p relative to the home directory unless it is absolute.
 func (h Home) Path(p string) string {
 	if filepath.IsAbs(p) {
@@ -52,6 +57,11 @@ func (h Home) Path(p string) string {
 // Project returns the paths of one project's directory.
 func (h Home) Project(name string) ProjectPaths {
 	return ProjectPaths{Dir: filepath.Join(h.ProjectsDir(), name)}
+}
+
+// Workspace returns the paths of a ticket's agent workspace.
+func (h Home) Workspace(project, ticket string) Workspace {
+	return Workspace{Dir: filepath.Join(h.WorkspacesDir(), project, ticket)}
 }
 
 // EnsureDir creates the home directory with mode 700 if it doesn't exist.
@@ -89,12 +99,27 @@ func (h Home) Projects() ([]string, error) {
 // ProjectPaths are the paths under projects/<name>/.
 type ProjectPaths struct{ Dir string }
 
-func (p ProjectPaths) Secrets() string   { return filepath.Join(p.Dir, "secrets.env") }
-func (p ProjectPaths) Repo() string      { return filepath.Join(p.Dir, "repo") }
-func (p ProjectPaths) Worktrees() string { return filepath.Join(p.Dir, "worktrees") }
-func (p ProjectPaths) Context() string   { return filepath.Join(p.Dir, "context") }
-func (p ProjectPaths) Runs() string      { return filepath.Join(p.Dir, "runs") }
+func (p ProjectPaths) Secrets() string { return filepath.Join(p.Dir, "secrets.env") }
+func (p ProjectPaths) Repo() string    { return filepath.Join(p.Dir, "repo") }
+func (p ProjectPaths) Context() string { return filepath.Join(p.Dir, "context") }
+func (p ProjectPaths) Runs() string    { return filepath.Join(p.Dir, "runs") }
 
 // Claude is the project's own CLAUDE_CONFIG_DIR: agent sessions persist
 // there for --resume, and the user's ~/.claude never applies (DESIGN §11.2).
 func (p ProjectPaths) Claude() string { return filepath.Join(p.Dir, "claude") }
+
+// Workspace is what agents work in for one ticket (DESIGN §11.3).
+// Everything in it can be rebuilt.
+type Workspace struct{ Dir string }
+
+// Checkout is the implementer's clone.
+func (w Workspace) Checkout() string { return filepath.Join(w.Dir, "checkout") }
+
+// Review is the reviewer's clone, only during a review.
+func (w Workspace) Review() string { return filepath.Join(w.Dir, "review") }
+
+// Context is the pickup's frozen copy of the project context.
+func (w Workspace) Context() string { return filepath.Join(w.Dir, "context") }
+
+// Tmp is agent pass n's TMPDIR, which also holds its result file.
+func (w Workspace) Tmp(n int) string { return filepath.Join(w.Dir, "tmp", strconv.Itoa(n)) }

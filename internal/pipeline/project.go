@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"sync"
 
 	"github.com/galimru/gosha/internal/agent"
@@ -52,6 +53,13 @@ func (e *Env) review(ctx context.Context, s agent.Spec, resultFile string) (*age
 		return e.Review(ctx, s, resultFile)
 	}
 	return agent.Review(ctx, s, resultFile)
+}
+
+// realHome is the home with symlinks resolved: the sandbox matches real
+// paths.
+func (e *Env) realHome() (config.Home, error) {
+	home, err := filepath.EvalSymlinks(e.Home.Dir())
+	return config.Home(home), err
 }
 
 // Project is a project with its config freshly loaded from the default branch.

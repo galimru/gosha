@@ -14,9 +14,13 @@ import (
 
 // Paths are the directories one agent run touches. Every path is absolute.
 type Paths struct {
-	// Home is Gosha's home (~/.gosha): denied, except for the paths below.
+	// Home is Gosha's home (~/.gosha): denied, except for its workspaces.
 	Home string
-	// Checkout is the ticket checkout: the working dir, read/write.
+	// Workspace is the ticket's workspace (workspaces/<project>/<ticket>),
+	// which holds every path below except the caches.
+	Workspace string
+	// Checkout is the agent's clone: the working dir, read/write for the
+	// implementer and read-only for the reviewer.
 	Checkout string
 	// RunDir is the run's temp dir and holds the result file: read/write.
 	RunDir string
@@ -85,20 +89,20 @@ var ReviewerDisallowed = []string{"Edit", "Write", "NotebookEdit"}
 // holds in every permission mode.
 //
 // The two layers need different shapes (SPIKES §1i): the OS sandbox denies
-// all of Home and re-allows the run's paths with allowRead/allowWrite, but
-// for permission rules a deny always beats an allow, so file tools get
-// denies for everything in Home *around* the run's paths instead.
+// all of Home and re-allows the ticket's workspace, but for permission
+// rules a deny always beats an allow, so file tools get denies for every
+// top-level entry of Home except workspaces/ instead.
 func Settings(p Paths, role string, sandbox bool) ([]byte, error) {
 	allow := []string{"Read", "Bash", "WebFetch", "WebSearch", "Task", "TodoWrite", "ToolSearch"}
 	if role != RoleReviewer {
 		allow = append(allow, "Edit("+rule(p.Checkout)+"/**)", "Edit("+rule(p.RunDir)+"/**)")
 	}
 	var deny []string
-	siblings, err := around(p.Home, []string{p.Checkout, p.RunDir, p.Context})
+	denied, err := outsideWorkspaces(p.Home)
 	if err != nil {
 		return nil, err
 	}
-	for _, s := range siblings {
+	for _, s := range denied {
 		deny = append(deny, "Read("+rule(s)+")", "Read("+rule(s)+"/**)", "Edit("+rule(s)+")", "Edit("+rule(s)+"/**)")
 	}
 	if p.Context != "" {
@@ -110,7 +114,7 @@ func Settings(p Paths, role string, sandbox bool) ([]byte, error) {
 	if sandbox {
 		fs := map[string]any{
 			"denyRead":   []string{p.Home},
-			"allowRead":  nonEmpty(p.Checkout, p.RunDir, p.Context),
+			"allowRead":  []string{p.Workspace},
 			"allowWrite": p.writable(role),
 		}
 		if p.Context != "" {
@@ -135,41 +139,19 @@ func nonEmpty(paths ...string) []string {
 	return slices.DeleteFunc(paths, func(s string) bool { return s == "" })
 }
 
-// around lists the entries under root that are neither one of keep nor an
-// ancestor of one: denying exactly these hides everything in root except
-// keep. Entries are listed now, so keep paths must already exist.
-func around(root string, keep []string) ([]string, error) {
-	root = filepath.Clean(root)
-	var kept []string
-	for _, k := range nonEmpty(keep...) {
-		k = filepath.Clean(k)
-		if strings.HasPrefix(k, root+string(filepath.Separator)) {
-			kept = append(kept, k)
-		}
+// outsideWorkspaces lists every top-level entry of home except
+// workspaces/: secrets, the database, projects, logs and anything added
+// later. Denying them leaves agents only the workspaces.
+func outsideWorkspaces(home string) ([]string, error) {
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		return nil, err
 	}
 	var out []string
-	var walk func(dir string) error
-	walk = func(dir string) error {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			return err
+	for _, e := range entries {
+		if e.Name() != "workspaces" {
+			out = append(out, filepath.Join(home, e.Name()))
 		}
-		for _, e := range entries {
-			path := filepath.Join(dir, e.Name())
-			switch {
-			case slices.Contains(kept, path):
-			case slices.ContainsFunc(kept, func(k string) bool { return strings.HasPrefix(k, path+string(filepath.Separator)) }):
-				if err := walk(path); err != nil {
-					return err
-				}
-			default:
-				out = append(out, path)
-			}
-		}
-		return nil
 	}
-	if len(kept) == 0 {
-		return []string{root}, nil
-	}
-	return out, walk(root)
+	return out, nil
 }

@@ -57,8 +57,8 @@ func TestChecksGreenMerges(t *testing.T) {
 	if h.onUpstream(r.Branch) {
 		t.Error("branch not deleted")
 	}
-	if _, err := os.Stat(filepath.Join(h.env.Home.Project("demo").Worktrees(), "NXT-12")); !os.IsNotExist(err) {
-		t.Errorf("checkout left behind: %v", err)
+	if _, err := os.Stat(h.env.Home.Workspace("demo", "NXT-12").Dir); !os.IsNotExist(err) {
+		t.Errorf("workspace left behind: %v", err)
 	}
 	if h.lin.state() != states.InReview.ID || len(h.lin.comments) != 1 {
 		t.Fatalf("linear = %+v", h.lin)

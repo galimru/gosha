@@ -314,7 +314,7 @@ context/
 - **Blocks → markdown:** paragraphs, headings, lists, to-dos, code, quotes, callouts, toggles (expanded), tables, dividers, bookmarks and links, and mentions. Images and files become a link plus a caption. Anything unsupported becomes `<!-- unsupported: type -->`.
 - **Databases aren't mirrored** (for now). A child database appears as `<!-- database "<title>" not mirrored -->` at its position in the parent page. Database support can be added later without changing the tree layout (a database would become a directory, one file per row).
 - **Rate limit:** respects Notion's limit (~3 req/s); rate limits and server errors are retried with backoff.
-- **Consistency:** before each pickup, a refresh runs and a copy of the mirror (without `.cache/` and the manifest) is frozen into `runs/<ticket>/context/` for that pickup, so its agents see consistent data. A lock (`projects/<project>/context.lock`) keeps a refresh and a freeze, from the daemon or the CLI, from interleaving.
+- **Consistency:** before each pickup, a refresh runs and a copy of the mirror (without `.cache/` and the manifest) is frozen into the ticket's workspace (`workspaces/<project>/<ticket>/context/`) for that pickup, so its agents see consistent data. A lock (`projects/<project>/context.lock`) keeps a refresh and a freeze, from the daemon or the CLI, from interleaving.
 - **Failures:**
   - **No access** (bad token, root page not shared or deleted): a setup problem. The project is **paused**, the same fail-closed way as an invalid config (§5.2), until a refresh succeeds.
   - **Anything else** (Notion down, network, rate limits that don't clear): the last mirror is used and a warning is logged. Only if no mirror was ever built does the project wait and retry without picking anything up.
@@ -331,7 +331,7 @@ Every run uses `--output-format stream-json --verbose`; the stream is saved (red
 
 | | Implementer | Reviewer |
 |---|---|---|
-| Working dir | ticket checkout (read/write) | a fresh clone of the pushed head, `worktrees/<ticket>-review`, read-only to it and removed after the round |
+| Working dir | ticket checkout (read/write) | a fresh clone of the pushed head in the ticket's workspace (`review/`), read-only to it and removed after the round |
 | Context | ticket + human comments + project context + feedback | ticket + project context + the last round's findings and reply; it reads the diff with `git diff` |
 | Session | resumes its own session across address passes when possible | **always fresh** |
 | Tools | all tools (edit, write, shell, local git) | edit/write tools removed; read, search, shell to read the code (`git diff`, `grep`). CI runs the tests. |
@@ -349,8 +349,9 @@ Two layers do this, and both are needed (M0 showed the OS sandbox alone isn't en
 Gosha generates both per run into a settings file passed with `--settings`. The settings file lives next to the transcript, outside anything the agent can write.
 
 The two layers need different shapes, because they resolve conflicts differently (checked on macOS, see [SPIKES.md](SPIKES.md#1i-sandbox-paths-inside-gosha-m2)):
-- **OS sandbox:** `denyRead` covers all of `~/.gosha`, and `allowRead`/`allowWrite` re-allow the run's checkout and temp directory inside it. A more specific allow wins here.
-- **Permission rules:** a deny always beats an allow, so `Read(~/.gosha/**)` would also hide the checkout from the Read tool. Gosha instead denies every entry of `~/.gosha` *around* the run's paths (other projects, `secrets.env`, the database, the bare clone, other tickets' checkouts, transcripts…). These entries are listed when the run starts, with no globs.
+- **OS sandbox:** `denyRead` covers all of `~/.gosha`, and `allowRead` re-allows the ticket's workspace, `workspaces/<project>/<ticket>/` (§11.3); `allowWrite` re-allows the checkout and temp directory in it. A more specific allow wins here.
+- **Permission rules:** a deny always beats an allow, so `Read(~/.gosha/**)` would also hide the checkout from the Read tool. Agents only ever work in `workspaces/`, so Gosha denies every other top-level entry of `~/.gosha` (`projects/`, `secrets.env`, the database, logs, and anything added later). A test checks that no top-level entry but `workspaces/` is left readable, so a new one can't fail open.
+- **Trade-off:** the Read tool can see other tickets' workspaces: repo code and frozen context, never credentials.
 
 - **One switch, `agent.sandbox` in the global config, picks both the sandbox and the permission mode.** It's host-level only: no project config, and so no merged PR, can change it.
 
@@ -358,7 +359,7 @@ The two layers need different shapes, because they resolve conflicts differently
   |---|---|---|
   | `true` (default) | on | `dontask`: `--permission-mode dontAsk --permission-prompts none`. Only what the generated allow rules list is permitted; everything else is denied without a prompt. The allow rules are: `Read`, `Bash` (confined by the sandbox), web fetch/search, and `Edit` inside the checkout and the run's temp directory only. |
   | `false` | off | `auto`: `--permission-mode auto --permission-prompts none`. Claude's classifier approves or blocks each action (in M0 it blocked no legitimate step). Without the sandbox, `dontask` would let Bash read secrets and write anywhere while still denying other tools: no protection, same friction. |
-- **Deny rules** apply in both modes: no `Read` or `Edit` anywhere in `~/.gosha` except the run's checkout and temp directory, and no `Edit` in the context copy.
+- **Deny rules** apply in both modes: no `Read` or `Edit` anywhere in `~/.gosha` outside `workspaces/`, and no `Edit` in the context copy. `Edit` is allowed only in the run's checkout and temp directory.
 - **Reviewer:** read-only. Its edit and write tools are *removed* (`--disallowedTools Edit,Write,NotebookEdit`), which holds in any mode, and it gets no `Edit` allow rules. In the sandbox its Bash can read its clone but write only the run's temp directory (for the result file), so it runs no tests or builds: CI does. With the sandbox off, only the removed tools and the `auto` classifier stop it from writing, which is why it still runs in its own clone and never in the implementer's checkout.
 - **Sandbox:** Gosha enables **Claude Code's built-in sandbox** (OS-level: Seatbelt on macOS, bubblewrap on Linux) for every agent run, with `failIfUnavailable: true` and `allowUnsandboxedCommands: false` (the agent can't ask to run a command outside it):
   - **Writable:** the ticket's checkout, the run's temp directory, and toolchain caches (the reviewer: only the run's temp directory). The default cache list depends on the OS (e.g. `~/.cache`, `~/go`, `~/.npm`, and `~/Library/Caches` on macOS), plus `agent.writable` from the global config. The sandbox can't create the missing parent of an allowed directory, so Gosha creates every writable directory before the run.
@@ -425,7 +426,7 @@ All of them go through the same **address** step (`address.md`, data in `.Feedba
 
 ### 8.2 Implement
 1. Refresh the project context and freeze a copy for the run (§6.2).
-2. Fetch, then create the ticket checkout `worktrees/<ticket>/` from `origin/<base>`. Gosha runs no commands in it: the implementer installs dependencies itself, sandboxed like the rest of its work (the repo's `CLAUDE.md` says how).
+2. Fetch, then create the ticket checkout `workspaces/<project>/<ticket>/checkout/` from `origin/<base>`. Gosha runs no commands in it: the implementer installs dependencies itself, sandboxed like the rest of its work (the repo's `CLAUDE.md` says how).
    - **The checkout is a self-contained local clone, not a linked `git worktree`.** The agent can write to everything in it, including `.git/`. A linked worktree would share the bare clone's refs, hooks and config, including `origin/<default>` (where config is read from) and the hooks Gosha's own push would run with the token in its environment.
    - **Gosha never runs git inside the checkout once an agent has used it.** It collects the work with `git fetch <checkout>` *from the bare clone*, which runs only upload-pack in the checkout, and then counts commits, measures the diff and pushes from the bare clone. Every Gosha git command also runs with hooks disabled.
    - A new run always starts from a fresh checkout. Later passes of the same run (resume) reuse it, and a lost checkout is rebuilt from the work Gosha already collected.
@@ -574,7 +575,7 @@ Gosha runs as an **existing regular user**, normally the one who installs it. Go
 - **Agent environment:** agents run `claude` with Gosha's own settings directory (`CLAUDE_CONFIG_DIR`), so the user's personal `~/.claude` (CLAUDE.md, hooks, MCP servers) doesn't apply to agent runs. The repo's own `CLAUDE.md` still does.
 
 ### 11.3 Paths
-Everything lives in **one directory**, `~/.gosha` of the running user. `--home` or `GOSHA_HOME` overrides it. Global items sit at the root, and everything about one project sits under `projects/<name>/`.
+Everything lives in **one directory**, `~/.gosha` of the running user. `--home` or `GOSHA_HOME` overrides it. Global items sit at the root, everything about one project sits under `projects/<name>/`, and everything agents work in sits under `workspaces/`. Folder names describe their content; only `workspaces/` is reachable by agents (§7.1).
 
 ```
 ~/.gosha/                                    # chmod 700
@@ -583,21 +584,25 @@ Everything lives in **one directory**, `~/.gosha` of the running user. `--home` 
 ├── github-app.pem                           # chmod 600
 ├── gosha.db                                 # runs/state for all projects
 ├── logs/gosha.log                           # structured, rotated; every line tagged with project
-└── projects/
+├── projects/
     └── <project>/
         ├── secrets.env                      # optional overrides, chmod 600
         ├── repo/                            # bare clone (presence = project registered)
-        ├── worktrees/<ticket>/              # ticket checkout (a local clone), one per active ticket
-        ├── worktrees/<ticket>-review/       # the reviewer's read-only clone, only during a review
         ├── claude/                          # CLAUDE_CONFIG_DIR for this project's agents (sessions)
         ├── context/                         # Notion mirror (INDEX.md + page tree)
         ├── context.lock                     # serialises refreshes and freezes
         └── runs/<ticket>/
-            ├── context/                     # this pickup's frozen copy of the mirror (read-only to agents)
-            ├── <n>/                         # pass n: the agent's TMPDIR and result file
             ├── <n>-<role>.jsonl             # full agent transcript (redacted); role is implement, review or address
             ├── <n>-settings.json            # generated agent settings
+            └── checks-<n>.json              # the checks a fix round was given
+└── workspaces/<project>/<ticket>/           # everything agents work in; all of it can be rebuilt
+    ├── checkout/                            # the implementer's clone, one per active ticket
+    ├── review/                              # the reviewer's read-only clone, only during a review
+    ├── context/                             # this pickup's frozen copy of the mirror (read-only to agents)
+    └── tmp/<n>/                             # pass n: the agent's TMPDIR and result file
 ```
+
+A ticket's workspace is removed once its PR is merged, and `gosha remove` removes a project's workspaces with it. A host move can skip `workspaces/`.
 
 The project's config is **not** in this tree; it's read from the repo (§5.2). `gosha config show <project>` prints the effective config (repo file + defaults).
 
@@ -700,7 +705,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - Telegram is the detailed activity feed, posted to a private channel. Linear only gets the PR attachment plus the Blocked and Delivered comments.
 - Daily digest at 09:00 (configurable, can be disabled). It also serves as the sign that Gosha is still running.
 - Ticket checkouts are self-contained local clones, never linked worktrees, and Gosha never runs git inside one after an agent has used it: the work is collected by fetching from the bare clone. (M2)
-- Sandbox layout: the OS sandbox denies `~/.gosha` and re-allows the run's paths; permission rules deny everything around the run's paths, because a permission deny beats any allow. (M2)
+- Sandbox layout: agents only work in `~/.gosha/workspaces/`. The OS sandbox denies `~/.gosha` and re-allows the ticket's workspace; permission rules deny every other top-level entry, because a permission deny beats any allow. (M2, simplified in M7)
 - Gosha runs no repo-defined commands outside the sandbox: there's no `agent.setup`, and agents install dependencies themselves. (M7)
 - Per-project Claude config dir (`projects/<project>/claude/`); prompts go to claude on stdin. (M2)
 - The reviewer runs in a fresh clone of the pushed head each round, so nothing it does reaches the implementer's checkout or the branch. It's read-only: it reads the diff with `git diff`, and CI runs the tests. (M7) Each round is a new session, but it's shown the last round's findings and the implementer's reply. (M3)
@@ -711,7 +716,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - The base is merged into the branch in the bare clone (`git merge-tree`, git ≥ 2.38); conflicts are resolved by the implementer in a fresh checkout and count as a check round. (M4)
 - Merges are pinned to the checked head; a push by anyone else after the checks blocks the ticket instead of being merged. New human PR feedback is addressed before merging. (M4)
 - The Notion mirror is refreshed before every pickup and every 15 minutes when idle. Search detects changes; the tree comes from each page's child page blocks; only changed pages are fetched. Page bodies are cached with links as page ids, so renames and moves rewrite links without re-fetching. (M5)
-- Notion without access to the root page pauses the project; any other Notion failure uses the last mirror. Each pickup gets its own frozen copy at `runs/<ticket>/context/`. (M5)
+- Notion without access to the root page pauses the project; any other Notion failure uses the last mirror. Each pickup gets its own frozen copy in the ticket's workspace. (M5)
 - A project resumes only after the config, Linear and Notion checks all pass, so a pause for one reason isn't cleared by another check passing. (M5)
 - Pages linked from tickets but outside the tree (`_linked/`) are deferred. (M5)
 - A ticket whose last PR was merged (by Gosha or by hand) is a follow-up when it's Ready again: a new branch, and the implementer is told about the earlier PR. A follow-up with no new human comment goes Blocked without running an agent. (M6)

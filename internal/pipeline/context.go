@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"time"
 
 	"github.com/galimru/gosha/internal/notify"
@@ -77,19 +76,18 @@ func (e *Env) refreshContext(ctx context.Context, p *Project) error {
 	return nil
 }
 
-// freezeContext copies the mirror for a ticket's pickup to
-// runs/<ticket>/context, so the agents in it see one consistent version.
+// freezeContext copies the mirror for a ticket's pickup to its
+// workspace, so the agents in it see one consistent version.
 func (e *Env) freezeContext(p *Project, ticketID string) (tmpl.Context, error) {
 	m, err := e.Mirror(p)
 	if err != nil {
 		return tmpl.Context{}, err
 	}
-	// The sandbox matches real paths, so resolve symlinks in the home.
-	home, err := filepath.EvalSymlinks(e.Home.Dir())
+	home, err := e.realHome()
 	if err != nil {
 		return tmpl.Context{}, err
 	}
-	dir := filepath.Join(home, "projects", p.Name, "runs", ticketID, "context")
+	dir := home.Workspace(p.Name, ticketID).Context()
 	idx, err := m.Freeze(dir)
 	if err != nil {
 		return tmpl.Context{}, fmt.Errorf("freeze context: %w", err)

@@ -130,7 +130,8 @@ func (t *ticket) afterMerge(ctx context.Context) error {
 	if err := t.p.Repo.DeleteBranch(ctx, tok, t.run.Branch); err != nil {
 		return err
 	}
-	if err := os.RemoveAll(t.checkout()); err != nil {
+	// No agent runs after the merge, so the whole workspace can go.
+	if err := os.RemoveAll(t.workspace().Dir); err != nil {
 		return err
 	}
 	if t.p.Config.Deploy.Workflow != "" && !t.report.Deploy.ok() {

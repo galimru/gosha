@@ -355,17 +355,17 @@ func TestTicketToPR(t *testing.T) {
 		t.Error("branch not pushed")
 	}
 	s := h.agent.calls[0]
-	if s.Resume != "" || s.Dir != filepath.Join(h.env.Home.Project("demo").Worktrees(), "NXT-12") ||
+	if s.Resume != "" || s.Dir != h.env.Home.Workspace("demo", "NXT-12").Checkout() ||
 		!strings.Contains(s.Prompt, "# NXT-12: Add login") || s.Git.Name != "goshabot[bot]" {
 		t.Errorf("spec = %+v", s)
 	}
 	if _, err := os.Stat(s.SettingsFile); err != nil {
 		t.Errorf("settings: %v", err)
 	}
-	// The reviewer ran without edit tools in its own throwaway clone.
+	// The reviewer ran without edit tools in its own clone.
 	rs := h.agent.reviews[0]
 	if !slices.Equal(rs.DisallowedTools, agent.ReviewerDisallowed) || rs.Resume != "" ||
-		rs.Dir != s.Dir+"-review" || !strings.Contains(rs.Prompt, "git diff origin/main...HEAD") || !strings.Contains(rs.Transcript, "2-review.jsonl") {
+		rs.Dir != h.env.Home.Workspace("demo", "NXT-12").Review() || !strings.Contains(rs.Prompt, "git diff origin/main...HEAD") || !strings.Contains(rs.Transcript, "2-review.jsonl") {
 		t.Errorf("reviewer spec = %+v", rs)
 	}
 	if _, err := os.Stat(rs.Dir); !os.IsNotExist(err) {

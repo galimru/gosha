@@ -70,7 +70,7 @@ func TestContextReachesAgents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(kb.Dir, "/projects/demo/runs/NXT-12/context") || !strings.Contains(kb.Index, "[Login spec](README.md) — Sessions last 30 days.") {
+	if !strings.HasSuffix(kb.Dir, "/workspaces/demo/NXT-12/context") || !strings.Contains(kb.Index, "[Login spec](README.md) — Sessions last 30 days.") {
 		t.Fatalf("kb = %+v", kb)
 	}
 	h.kb = kb
