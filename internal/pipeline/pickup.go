@@ -1,5 +1,5 @@
-// Package pipeline is the per-ticket pipeline (DESIGN §8). As of M2 it
-// takes a ticket from Ready to an open PR.
+// Package pipeline is the per-ticket pipeline (DESIGN §8). As of M3 it
+// takes a ticket from Ready to a reviewed PR.
 package pipeline
 
 import (
@@ -101,12 +101,16 @@ func openBlockers(is linear.Issue, st *linear.States) []string {
 }
 
 func mode(p *config.Project, c Candidate) (mode, branch string) {
-	if c.OpenRun != nil {
-		return ModeResume, c.OpenRun.Branch
-	}
 	m := ModeFresh
-	if HasRestart(c.NewComments) {
+	switch {
+	case HasRestart(c.NewComments):
 		m = ModeRestart
+	case c.OpenRun != nil && c.OpenRun.PRNumber == 0:
+		return ModeResume, c.OpenRun.Branch
+	case c.OpenRun != nil && len(c.NewComments) > 0:
+		return ModeResume + " (address)", c.OpenRun.Branch
+	case c.OpenRun != nil:
+		return ModeResume + " (review)", c.OpenRun.Branch
 	}
 	branch, err := p.BranchName(Ticket(c.Issue, nil))
 	if err != nil {

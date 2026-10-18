@@ -20,14 +20,16 @@ import (
 	"github.com/galimru/gosha/internal/tmpl"
 )
 
-// Steps a run records (DESIGN §8). In M2 a run parks at StepReview once its
-// PR is open: the review loop arrives in M3.
+// Steps a run records (DESIGN §8). In M3 a run parks at StepChecks once the
+// reviewer approves: checks and merge arrive in M4.
 const (
 	StepClaimed   = "claimed"
 	StepImplement = "implement"
 	StepPush      = "push"
 	StepPR        = "pr"
 	StepReview    = "review"
+	StepAddress   = "address"
+	StepChecks    = "checks"
 	StepBlocked   = "blocked"
 )
 
@@ -42,7 +44,7 @@ const ModeFollowUp = "fresh (follow-up)"
 
 // Parked reports whether an open run is waiting rather than active, so the
 // project can pick up another ticket.
-func Parked(r *store.Run) bool { return r.Step == StepReview || r.Step == StepBlocked }
+func Parked(r *store.Run) bool { return r.Step == StepChecks || r.Step == StepBlocked }
 
 // issueOps is the Linear surface a ticket run uses.
 type issueOps interface {
@@ -57,6 +59,9 @@ type prOps interface {
 	PR(ctx context.Context, number int) (*github.PR, error)
 	CreatePR(ctx context.Context, branch, base, title, body string) (*github.PR, error)
 	ClosePR(ctx context.Context, number int) error
+	CreateReview(ctx context.Context, number int, sha, body string, comments []github.ReviewComment) (int64, error)
+	CreateComment(ctx context.Context, number int, body string) error
+	HumanFeedback(ctx context.Context, number int, since time.Time) ([]github.Feedback, error)
 }
 
 // ticket is one pickup of one ticket.
@@ -76,10 +81,16 @@ type ticket struct {
 	cursor  *store.Cursor
 	run     *store.Run
 	started time.Time
+	// fromReady is set when a human moved the ticket to Ready, as opposed
+	// to an interrupted run continuing: it resets the round limits.
+	fromReady bool
+	// actx carries the pickup's agent.timeout budget, shared by every
+	// agent pass in it.
+	actx context.Context
 }
 
 // Pass does one pickup pass for a project: it picks the next Ready ticket
-// (if any) and takes it as far as M2 goes. It reports whether a ticket was
+// (if any) and takes it as far as M3 goes. It reports whether a ticket was
 // handled. With only set, just that ticket is considered.
 func (e *Env) Pass(ctx context.Context, name, only string) (bool, error) {
 	p, err := e.LoadProject(ctx, name)
@@ -182,7 +193,11 @@ func (e *Env) botIdentity(ctx context.Context, inst *github.Installation) (agent
 // ticket In Progress and the run resumable.
 func (e *Env) handle(ctx context.Context, p *Project, st *linear.States, is issueOps, prs prOps, bot agent.Identity, c Candidate) error {
 	t := &ticket{e: e, p: p, states: st, issues: is, prs: prs, bot: bot,
-		issue: c.Issue, comments: c.NewComments, run: c.OpenRun, started: time.Now()}
+		issue: c.Issue, comments: c.NewComments, run: c.OpenRun, started: time.Now(),
+		fromReady: c.Issue.State.ID != st.InProgress.ID}
+	actx, cancel := context.WithTimeoutCause(ctx, p.Config.Agent.Timeout, errAgentTimeout)
+	defer cancel()
+	t.actx = actx
 	if err := t.claim(ctx, c.Comments); err != nil {
 		return err
 	}
@@ -266,8 +281,7 @@ func (t *ticket) drive(ctx context.Context) error {
 				return err
 			}
 		case pr.State == "open":
-			return t.block(ctx, fmt.Sprintf("The PR is open (#%d). Gosha can't act on feedback on an open PR yet: that arrives in M3. "+
-				"Merge or close the PR yourself, or comment `/restart` and move the ticket to Ready to start over.", pr.Number), nil)
+			return t.resumeOpen(ctx)
 		default:
 			// Closed without merging: start over.
 			reuse = t.run.Branch
@@ -377,10 +391,6 @@ func (t *ticket) implement(ctx context.Context) error {
 	if err := t.save(ctx, StepImplement); err != nil {
 		return err
 	}
-	cfg := t.p.Config.Agent
-	actx, cancel := context.WithTimeoutCause(ctx, cfg.Timeout, errAgentTimeout)
-	defer cancel()
-
 	checkout := t.checkout()
 	if t.run.AgentRuns == 0 {
 		// A new run never inherits a checkout from an earlier one.
@@ -388,30 +398,10 @@ func (t *ticket) implement(ctx context.Context) error {
 			return err
 		}
 	}
-	fresh, err := t.p.Repo.CloneCheckout(ctx, checkout, t.run.BaseBranch, t.run.Branch)
-	if err != nil {
+	fresh, rp, err := t.prepare(ctx, checkout, agent.RoleImplementer)
+	if err != nil || t.run.Step == StepBlocked {
 		return err
 	}
-	t.run.AgentRuns++
-	if err := t.save(ctx, StepImplement); err != nil {
-		return err
-	}
-	rp, err := t.runPaths(t.run.AgentRuns)
-	if err != nil {
-		return err
-	}
-	if fresh && len(cfg.Setup) > 0 {
-		if err := t.setup(actx, checkout, rp); err != nil {
-			if errors.Is(context.Cause(actx), errAgentTimeout) {
-				return t.block(ctx, fmt.Sprintf("`agent.setup` ran out of time (agent.timeout %v).", cfg.Timeout), nil)
-			}
-			if ctx.Err() != nil {
-				return err
-			}
-			return t.block(ctx, err.Error(), nil)
-		}
-	}
-
 	resultFile := filepath.Join(rp.agent.RunDir, "result.json")
 	prompt, err := agent.RenderPrompt(ctx, t.p.Repo, t.p.Commit, "implement.md", tmpl.Data{
 		Project: t.p.Name, Ticket: Ticket(t.issue, t.comments),
@@ -420,57 +410,15 @@ func (t *ticket) implement(ctx context.Context) error {
 	if err != nil {
 		return t.block(ctx, err.Error(), nil)
 	}
-	spec := agent.Spec{
-		Binary: t.e.ClaudeBinary, Prompt: prompt, Dir: checkout, SettingsFile: rp.settings, Transcript: rp.transcript,
-		Mode: cfg.PermissionMode, Model: cfg.Model,
-		OAuthToken: t.e.Global.Claude.OAuthToken, ConfigDir: t.e.Home.Project(t.p.Name).Claude(), TmpDir: rp.agent.RunDir,
-		Git: t.bot, Redact: t.e.Redactor.Redact,
-	}
+	spec := t.spec(prompt, checkout, rp)
 	if t.run.Mode == ModeResume && !fresh {
 		spec.Resume = t.run.ImplSession
 	}
-	res, out, err := t.e.implement(actx, spec, resultFile)
-	if err != nil && spec.Resume != "" && !isStop(actx, err) {
-		// The session may be gone (another host, a cleared config dir):
-		// start a new one in the same checkout.
-		t.e.Log.Warn("resume failed, starting a new session", "ticket", t.issue.Identifier, "err", err)
-		spec.Resume = ""
-		res, out, err = t.e.implement(actx, spec, resultFile)
-	}
-	if out != nil && out.SessionID != "" {
-		t.run.ImplSession = out.SessionID
-		if serr := t.save(ctx, StepImplement); serr != nil {
-			return serr
-		}
-	}
-	if !isStop(actx, err) || errors.Is(context.Cause(actx), errAgentTimeout) {
-		if err := t.consumeComments(ctx); err != nil {
-			return err
-		}
-	}
-	var le *agent.LimitError
-	switch {
-	case errors.As(err, &le):
+	res, err := t.runImplementer(ctx, spec, resultFile)
+	if res == nil {
 		return err
-	case err != nil && errors.Is(context.Cause(actx), errAgentTimeout):
-		return t.block(ctx, fmt.Sprintf("The agent ran out of time (agent.timeout %v).", cfg.Timeout), nil)
-	case err != nil && ctx.Err() != nil:
-		return err
-	case err != nil:
-		return t.block(ctx, "The agent failed: "+err.Error(), nil)
 	}
-	if res.Status == agent.StatusBlocked {
-		return t.block(ctx, res.BlockedReason, res.Questions)
-	}
-
-	if err := t.p.Repo.FetchFrom(ctx, checkout, t.run.Branch); err != nil {
-		if errors.Is(err, gitx.ErrNotCheckout) {
-			return t.block(ctx, "The ticket checkout is damaged (its .git isn't a directory). Comment `/restart` and move the ticket to Ready to start over.", nil)
-		}
-		var gerr *gitx.Error
-		if errors.As(err, &gerr) && strings.Contains(gerr.Stderr, "couldn't find remote ref") {
-			return t.block(ctx, fmt.Sprintf("No changes produced: the agent left no commits on `%s`.", t.run.Branch), nil)
-		}
+	if ok, err := t.collect(ctx, checkout); !ok {
 		return err
 	}
 	ahead, err := t.p.Repo.CommitsAhead(ctx, t.run.BaseBranch, t.run.Branch)
@@ -486,6 +434,111 @@ func (t *ticket) implement(ctx context.Context) error {
 	}
 	t.notify(fmt.Sprintf("%s · implemented · %s · %s\n%s", t.issue.Identifier, diff, time.Since(t.started).Round(time.Minute), res.Summary))
 	return t.publish(ctx, res, diff)
+}
+
+// prepare makes checkout ready for an agent pass: it clones it if needed,
+// numbers the pass, lays out its files and runs agent.setup in a fresh
+// clone. A failed setup sends the ticket Blocked.
+func (t *ticket) prepare(ctx context.Context, checkout, role string) (fresh bool, rp runPaths, err error) {
+	fresh, err = t.p.Repo.CloneCheckout(ctx, checkout, t.run.BaseBranch, t.run.Branch)
+	if err != nil {
+		return false, rp, err
+	}
+	t.run.AgentRuns++
+	if err := t.save(ctx, t.run.Step); err != nil {
+		return false, rp, err
+	}
+	if rp, err = t.runPaths(t.run.AgentRuns, role, checkout); err != nil {
+		return false, rp, err
+	}
+	if fresh && len(t.p.Config.Agent.Setup) > 0 {
+		if err := t.setup(t.actx, checkout, rp); err != nil {
+			if errors.Is(context.Cause(t.actx), errAgentTimeout) {
+				return false, rp, t.block(ctx, fmt.Sprintf("`agent.setup` ran out of time (agent.timeout %v).", t.p.Config.Agent.Timeout), nil)
+			}
+			if ctx.Err() != nil {
+				return false, rp, err
+			}
+			return false, rp, t.block(ctx, err.Error(), nil)
+		}
+	}
+	return fresh, rp, nil
+}
+
+func (t *ticket) spec(prompt, dir string, rp runPaths) agent.Spec {
+	cfg := t.p.Config.Agent
+	return agent.Spec{
+		Binary: t.e.ClaudeBinary, Prompt: prompt, Dir: dir, SettingsFile: rp.settings, Transcript: rp.transcript,
+		Mode: cfg.PermissionMode, Model: cfg.Model,
+		OAuthToken: t.e.Global.Claude.OAuthToken, ConfigDir: t.e.Home.Project(t.p.Name).Claude(), TmpDir: rp.agent.RunDir,
+		Git: t.bot, Redact: t.e.Redactor.Redact,
+	}
+}
+
+// runImplementer runs an implementer pass (implement or address) and maps
+// its failures. It returns a nil result when the pass ended the step: the
+// ticket went Blocked (nil error), or a usage limit or shutdown (error).
+func (t *ticket) runImplementer(ctx context.Context, spec agent.Spec, resultFile string) (*agent.ImplementerResult, error) {
+	actx := t.actx
+	res, out, err := t.e.implement(actx, spec, resultFile)
+	if err != nil && spec.Resume != "" && !isStop(actx, err) {
+		// The session may be gone (another host, a cleared config dir):
+		// start a new one in the same checkout.
+		t.e.Log.Warn("resume failed, starting a new session", "ticket", t.issue.Identifier, "err", err)
+		spec.Resume = ""
+		res, out, err = t.e.implement(actx, spec, resultFile)
+	}
+	if out != nil && out.SessionID != "" {
+		t.run.ImplSession = out.SessionID
+		if serr := t.save(ctx, t.run.Step); serr != nil {
+			return nil, serr
+		}
+	}
+	if !isStop(actx, err) || errors.Is(context.Cause(actx), errAgentTimeout) {
+		if err := t.consumeComments(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if err != nil {
+		return nil, t.agentFailed(ctx, "agent", err)
+	}
+	if res.Status == agent.StatusBlocked {
+		return nil, t.block(ctx, res.BlockedReason, res.Questions)
+	}
+	return res, nil
+}
+
+// agentFailed handles a failed agent pass: a usage limit or shutdown is
+// returned as it is, anything else sends the ticket Blocked.
+func (t *ticket) agentFailed(ctx context.Context, who string, err error) error {
+	var le *agent.LimitError
+	switch {
+	case errors.As(err, &le):
+		return err
+	case errors.Is(context.Cause(t.actx), errAgentTimeout):
+		return t.block(ctx, fmt.Sprintf("The %s ran out of time: agent.timeout (%v) is the budget for all agent work in one pickup.", who, t.p.Config.Agent.Timeout), nil)
+	case ctx.Err() != nil:
+		return err
+	}
+	return t.block(ctx, fmt.Sprintf("The %s failed: %v", who, err), nil)
+}
+
+// collect fetches the agent's work from the checkout into the bare clone.
+// It returns false when there's nothing to collect and the ticket went
+// Blocked, or on error.
+func (t *ticket) collect(ctx context.Context, checkout string) (bool, error) {
+	err := t.p.Repo.FetchFrom(ctx, checkout, t.run.Branch)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, gitx.ErrNotCheckout) {
+		return false, t.block(ctx, "The ticket checkout is damaged (its .git isn't a directory). Comment `/restart` and move the ticket to Ready to start over.", nil)
+	}
+	var gerr *gitx.Error
+	if errors.As(err, &gerr) && strings.Contains(gerr.Stderr, "couldn't find remote ref") {
+		return false, t.block(ctx, fmt.Sprintf("No changes produced: the agent left no commits on `%s`.", t.run.Branch), nil)
+	}
+	return false, err
 }
 
 var errAgentTimeout = errors.New("agent.timeout reached")
@@ -510,16 +563,7 @@ func (t *ticket) publish(ctx context.Context, res *agent.ImplementerResult, diff
 	if err := t.save(ctx, StepPush); err != nil {
 		return err
 	}
-	tok, err := t.prs.Token(ctx)
-	if err != nil {
-		return err
-	}
-	if err := t.p.Repo.Push(ctx, tok, t.run.Branch); err != nil {
-		if errors.Is(err, gitx.ErrWorkflowPermission) {
-			return t.block(ctx, "GitHub refused the push because it changes `.github/workflows/`. "+
-				"Gosha's GitHub App deliberately has no Workflows permission, so agents can't change CI or deploy pipelines. "+
-				"Either make that change yourself, or comment that the workflow change should be left out and move the ticket to Ready.", nil)
-		}
+	if ok, err := t.push(ctx); !ok {
 		return err
 	}
 	if err := t.save(ctx, StepPR); err != nil {
@@ -541,9 +585,24 @@ func (t *ticket) publish(ctx context.Context, res *agent.ImplementerResult, diff
 		return err
 	}
 	t.e.Log.Info("PR opened", "project", t.p.Name, "ticket", t.issue.Identifier, "pr", pr.URL)
-	t.notify(fmt.Sprintf("%s · PR #%d opened · waiting for review (M3)", t.issue.Identifier, pr.Number),
-		notify.Link{Text: fmt.Sprintf("PR #%d", pr.Number), URL: pr.URL}, t.ticketLink())
-	return nil
+	t.notify(fmt.Sprintf("%s · PR #%d opened", t.issue.Identifier, pr.Number), t.prLink(), t.ticketLink())
+	return t.reviewLoop(ctx, false)
+}
+
+// push pushes the branch from the bare clone. It returns false when GitHub
+// refused it and the ticket went Blocked, or on error.
+func (t *ticket) push(ctx context.Context) (bool, error) {
+	tok, err := t.prs.Token(ctx)
+	if err != nil {
+		return false, err
+	}
+	err = t.p.Repo.Push(ctx, tok, t.run.Branch)
+	if errors.Is(err, gitx.ErrWorkflowPermission) {
+		return false, t.block(ctx, "GitHub refused the push because it changes `.github/workflows/`. "+
+			"Gosha's GitHub App deliberately has no Workflows permission, so agents can't change CI or deploy pipelines. "+
+			"Either make that change yourself, or comment that the workflow change should be left out and move the ticket to Ready.", nil)
+	}
+	return err == nil, err
 }
 
 func prBody(is linear.Issue, res *agent.ImplementerResult) string {
@@ -570,7 +629,7 @@ type runPaths struct {
 	setupLog   string
 }
 
-func (t *ticket) runPaths(n int) (runPaths, error) {
+func (t *ticket) runPaths(n int, role, checkout string) (runPaths, error) {
 	// The sandbox matches real paths, so resolve symlinks in the home.
 	home, err := filepath.EvalSymlinks(t.e.Home.Dir())
 	if err != nil {
@@ -584,11 +643,11 @@ func (t *ticket) runPaths(n int) (runPaths, error) {
 	runs := filepath.Join(pp, "runs", t.issue.Identifier)
 	rp := runPaths{
 		agent: agent.Paths{
-			Home: home, Checkout: filepath.Join(pp, "worktrees", t.issue.Identifier),
+			Home: home, Checkout: filepath.Join(pp, "worktrees", filepath.Base(checkout)),
 			RunDir: filepath.Join(runs, fmt.Sprint(n)), UserHome: userHome, Writable: t.e.Global.Agent.Writable,
 		},
 		settings:   filepath.Join(runs, fmt.Sprintf("%d-settings.json", n)),
-		transcript: filepath.Join(runs, fmt.Sprintf("%d-implement.jsonl", n)),
+		transcript: filepath.Join(runs, fmt.Sprintf("%d-%s.jsonl", n, role)),
 		setupLog:   filepath.Join(runs, fmt.Sprintf("%d-setup.log", n)),
 	}
 	if err := os.MkdirAll(t.e.Home.Project(t.p.Name).Claude(), 0o700); err != nil {
@@ -597,7 +656,7 @@ func (t *ticket) runPaths(n int) (runPaths, error) {
 	if err := rp.agent.EnsureDirs(); err != nil {
 		return runPaths{}, err
 	}
-	data, err := agent.Settings(rp.agent, agent.RoleImplementer, t.e.Global.Agent.SandboxEnabled())
+	data, err := agent.Settings(rp.agent, role, t.e.Global.Agent.SandboxEnabled())
 	if err != nil {
 		return runPaths{}, err
 	}
@@ -649,6 +708,10 @@ func lastLines(s string, n int) string {
 
 func (t *ticket) ticketLink() notify.Link {
 	return notify.Link{Text: t.issue.Identifier, URL: t.issue.URL}
+}
+
+func (t *ticket) prLink() notify.Link {
+	return notify.Link{Text: fmt.Sprintf("PR #%d", t.run.PRNumber), URL: t.run.PRURL}
 }
 
 func (t *ticket) notify(text string, links ...notify.Link) {

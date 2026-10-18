@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -49,8 +50,37 @@ func (f *fakeLinear) state() string {
 }
 
 type fakePRs struct {
-	prs    map[int]*github.PR
-	closed []int
+	prs      map[int]*github.PR
+	closed   []int
+	reviews  []postedReview
+	comments []string
+	// feedback is human PR feedback; HumanFeedback returns what's after since.
+	feedback []github.Feedback
+}
+
+type postedReview struct {
+	sha, body string
+	comments  []github.ReviewComment
+}
+
+func (f *fakePRs) CreateReview(_ context.Context, _ int, sha, body string, cs []github.ReviewComment) (int64, error) {
+	f.reviews = append(f.reviews, postedReview{sha, body, cs})
+	return int64(len(f.reviews)), nil
+}
+
+func (f *fakePRs) CreateComment(_ context.Context, _ int, body string) error {
+	f.comments = append(f.comments, body)
+	return nil
+}
+
+func (f *fakePRs) HumanFeedback(_ context.Context, _ int, since time.Time) ([]github.Feedback, error) {
+	var out []github.Feedback
+	for _, fb := range f.feedback {
+		if fb.At.After(since) {
+			out = append(out, fb)
+		}
+	}
+	return out, nil
 }
 
 func (f *fakePRs) Token(context.Context) (string, error) { return "", nil }
@@ -75,12 +105,34 @@ func (f *fakePRs) ClosePR(_ context.Context, n int) error {
 	return nil
 }
 
-// fakeAgent stands in for the implementer.
+// fakeAgent stands in for the implementer and the reviewer.
 type fakeAgent struct {
 	t     *testing.T
 	calls []agent.Spec
 	// act runs in the checkout for each call and returns the result JSON.
 	act func(call int, dir string) string
+	// reviews are the reviewer's calls; review returns the result JSON for
+	// each (approve if nil).
+	reviews []agent.Spec
+	review  func(call int, dir string) string
+}
+
+func (a *fakeAgent) reviewer(_ context.Context, s agent.Spec, _ string) (*agent.ReviewerResult, *agent.Outcome, error) {
+	a.reviews = append(a.reviews, s)
+	out := &agent.Outcome{SessionID: fmt.Sprintf("review-%d", len(a.reviews))}
+	res := approve
+	if a.review != nil {
+		res = a.review(len(a.reviews), s.Dir)
+	}
+	if res == "" {
+		return nil, out, &agent.LimitError{Status: "rejected", ResetsAt: time.Now().Add(time.Hour)}
+	}
+	r, err := agent.ParseReviewer([]byte(res))
+	if err == nil {
+		// Write it where the pipeline reads it back after a restart.
+		os.WriteFile(filepath.Join(s.TmpDir, "review.json"), []byte(res), 0o600)
+	}
+	return r, out, err
 }
 
 func (a *fakeAgent) implement(_ context.Context, s agent.Spec, resultFile string) (*agent.ImplementerResult, *agent.Outcome, error) {
@@ -114,6 +166,11 @@ func commitFile(t *testing.T, dir, name string) {
 }
 
 const doneResult = `{"status":"done","summary":"Added login.","verification":"go test","assumptions":["email only"]}`
+
+const (
+	approve        = `{"verdict":"approve","summary":"Looks right.","comments":[{"path":"login.go","line":1,"severity":"nit","body":"name"}]}`
+	requestChanges = `{"verdict":"request_changes","summary":"Missing tests.","comments":[{"path":"login.go","line":1,"severity":"must","body":"add a test"}]}`
+)
 
 type harness struct {
 	t        *testing.T
@@ -162,7 +219,7 @@ func newHarness(t *testing.T, cfg string) *harness {
 	}
 	h.agent = &fakeAgent{t: t}
 	h.env = &Env{Home: home, Global: &config.Global{}, Store: st, Notify: h.events,
-		Log: slog.New(slog.DiscardHandler), Redactor: config.NewRedactor(), Implement: h.agent.implement}
+		Log: slog.New(slog.DiscardHandler), Redactor: config.NewRedactor(), Implement: h.agent.implement, Review: h.agent.reviewer}
 	return h
 }
 
@@ -198,7 +255,7 @@ func TestTicketToPR(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := h.run()
-	if r.Step != StepReview || r.PRNumber != 1 || r.Branch != "gosha/NXT-12-add-login" || r.ImplSession != "sess-1" || !Parked(r) {
+	if r.Step != StepChecks || r.PRNumber != 1 || r.Branch != "gosha/NXT-12-add-login" || r.ImplSession != "sess-1" || !Parked(r) || r.ReviewRound != 1 {
 		t.Errorf("run = %+v", r)
 	}
 	if h.lin.state() != states.InProgress.ID || len(h.lin.attachments) != 1 || len(h.lin.comments) != 0 {
@@ -215,8 +272,22 @@ func TestTicketToPR(t *testing.T) {
 	if _, err := os.Stat(s.SettingsFile); err != nil {
 		t.Errorf("settings: %v", err)
 	}
+	// The reviewer ran without edit tools in its own throwaway clone.
+	rs := h.agent.reviews[0]
+	if !slices.Equal(rs.DisallowedTools, agent.ReviewerDisallowed) || rs.Resume != "" ||
+		rs.Dir != s.Dir+"-review" || !strings.Contains(rs.Prompt, "+login.go") || !strings.Contains(rs.Transcript, "2-review.jsonl") {
+		t.Errorf("reviewer spec = %+v", rs)
+	}
+	if _, err := os.Stat(rs.Dir); !os.IsNotExist(err) {
+		t.Errorf("review clone left behind: %v", err)
+	}
+	head := gitIn(t, h.upstream, "rev-parse", r.Branch)
+	if len(h.prs.reviews) != 1 || h.prs.reviews[0].sha != head || !strings.Contains(h.prs.reviews[0].body, "✅ **Approved** · Gosha review 1/3") ||
+		h.prs.reviews[0].comments[0].Body != "**nit:** name" {
+		t.Errorf("reviews = %+v", h.prs.reviews)
+	}
 	ev := strings.Join(h.events.take(), "\n")
-	for _, want := range []string{"picked up (fresh)", "implemented · +1 −0 in 1 files", "PR #1 opened"} {
+	for _, want := range []string{"picked up (fresh)", "implemented · +1 −0 in 1 files", "PR #1 opened", "review 1/3 ✅ · 0 must, 0 should, 1 nit · waiting for checks (M4)"} {
 		if !strings.Contains(ev, want) {
 			t.Errorf("events missing %q:\n%s", want, ev)
 		}
@@ -249,7 +320,7 @@ func TestAgentBlockedThenResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	r = h.run()
-	if r.Step != StepReview || r.Branch != "gosha/NXT-12-add-login" || r.AgentRuns != 2 {
+	if r.Step != StepChecks || r.Branch != "gosha/NXT-12-add-login" || r.AgentRuns != 3 {
 		t.Errorf("run = %+v", r)
 	}
 	s := h.agent.calls[1]
@@ -293,15 +364,16 @@ func TestWorkflowPushRejected(t *testing.T) {
 	}
 }
 
-func TestOpenPRBlocks(t *testing.T) {
+func TestReadyOnOpenPRReviewsAgain(t *testing.T) {
 	h := newHarness(t, "")
 	h.agent.act = func(_ int, dir string) string { commitFile(t, dir, "login.go"); return doneResult }
 	h.pickup()
+	// No new comments anywhere: a fresh review of the same head.
 	if err := h.pickup(); err != nil {
 		t.Fatal(err)
 	}
-	if r := h.run(); r.Step != StepBlocked || !strings.Contains(r.BlockedReason, "M3") || len(h.agent.calls) != 1 {
-		t.Errorf("run = %+v, %d agent calls", r, len(h.agent.calls))
+	if r := h.run(); r.Step != StepChecks || r.ReviewRound != 1 || len(h.agent.calls) != 1 || len(h.prs.reviews) != 2 {
+		t.Errorf("run = %+v, %d agent calls, %d reviews", r, len(h.agent.calls), len(h.prs.reviews))
 	}
 }
 
@@ -315,7 +387,7 @@ func TestFollowUpAfterMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := h.run()
-	if r.ID == first.ID || r.Mode != ModeFollowUp || r.Branch != "gosha/NXT-12-add-login-2" || r.Step != StepReview || r.PRNumber != 2 {
+	if r.ID == first.ID || r.Mode != ModeFollowUp || r.Branch != "gosha/NXT-12-add-login-2" || r.Step != StepChecks || r.PRNumber != 2 {
 		t.Errorf("follow-up run = %+v", r)
 	}
 	if h.agent.calls[1].Resume != "" {
@@ -332,7 +404,7 @@ func TestRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := h.run()
-	if r.ID == first.ID || r.Mode != ModeRestart || r.Branch != first.Branch || r.Step != StepReview {
+	if r.ID == first.ID || r.Mode != ModeRestart || r.Branch != first.Branch || r.Step != StepChecks {
 		t.Errorf("restarted run = %+v", r)
 	}
 	if len(h.prs.closed) != 1 || h.prs.closed[0] != first.PRNumber {
@@ -406,7 +478,7 @@ func TestInterruptedRunKeepsComments(t *testing.T) {
 	if !strings.Contains(h.agent.calls[1].Prompt, "Use OAuth.") {
 		t.Error("the continued run lost the comment")
 	}
-	if r := h.run(); r.Step != StepReview {
+	if r := h.run(); r.Step != StepChecks {
 		t.Errorf("run = %+v", r)
 	}
 }
