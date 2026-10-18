@@ -148,6 +148,23 @@ func TestReviewFields(t *testing.T) {
 	}
 }
 
+func TestChecksFields(t *testing.T) {
+	ctx := context.Background()
+	s, _ := open(t)
+	r := &Run{Project: "p", TicketID: "NXT-1", Mode: "fresh"}
+	if err := s.CreateRun(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	r.CheckRound, r.CheckedSHA, r.ChecksResult, r.MergeSHA = 2, "abc", "/r/ci.md", "def"
+	if err := s.UpdateRun(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.OpenRun(ctx, "p", "NXT-1")
+	if err != nil || got.CheckRound != 2 || got.CheckedSHA != "abc" || got.ChecksResult != "/r/ci.md" || got.MergeSHA != "def" {
+		t.Fatalf("after update: %+v, %v", got, err)
+	}
+}
+
 func TestMigrateFromM2(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "gosha.db")
