@@ -26,7 +26,7 @@ name: nextdesk
 linear:
   team: NXT
 notion:
-  root_page: https://www.notion.so/NextDesk-abc
+  root_page: https://www.notion.so/NextDesk-1a2b3c4d5e6f708192a3b4c5d6e7f809
 `
 
 func TestProjectDefaults(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	"github.com/galimru/gosha/internal/gitx"
 	"github.com/galimru/gosha/internal/linear"
 	"github.com/galimru/gosha/internal/notify"
+	"github.com/galimru/gosha/internal/notion"
 	"github.com/galimru/gosha/internal/store"
 )
 
@@ -31,6 +32,9 @@ type Env struct {
 	Implement func(context.Context, agent.Spec, string) (*agent.ImplementerResult, *agent.Outcome, error)
 	// Review runs the reviewer: agent.Review unless replaced in tests.
 	Review func(context.Context, agent.Spec, string) (*agent.ReviewerResult, *agent.Outcome, error)
+	// Notion makes the Notion client for a token: notion.New unless
+	// replaced in tests.
+	Notion func(token string) notion.API
 
 	botMu sync.Mutex
 	bot   *agent.Identity
@@ -105,8 +109,8 @@ func (e *Env) LoadProject(ctx context.Context, name string) (*Project, error) {
 }
 
 // readConfig reads the config from the freshly fetched origin/<default>,
-// pausing the project if it's missing or invalid and resuming it once it's
-// valid again.
+// pausing the project if it's missing or invalid. Resuming is left to the
+// caller, once every check that can pause the project has passed.
 func (e *Env) readConfig(ctx context.Context, p *Project) error {
 	var err error
 	if p.Base, err = p.Repo.DefaultBranch(ctx); err != nil {
@@ -123,7 +127,6 @@ func (e *Env) readConfig(ctx context.Context, p *Project) error {
 	if cfg.GitHub.DefaultBranch != "" {
 		p.Base = cfg.GitHub.DefaultBranch
 	}
-	e.resume(ctx, p)
 	return nil
 }
 
@@ -184,11 +187,13 @@ func (e *Env) pause(ctx context.Context, p *Project, cause error) error {
 	}
 	if changed {
 		e.Log.Warn("project paused", "project", p.Name, "commit", p.Commit, "reason", reason)
-		e.Notify.Send(notify.Event{Project: p.Name, Text: fmt.Sprintf("%s at %.7s: %s · paused", config.ProjectFile, p.Commit, reason)})
+		e.Notify.Send(notify.Event{Project: p.Name, Text: fmt.Sprintf("paused at %.7s: %s", p.Commit, reason)})
 	}
 	return &PausedError{Project: p.Name, Commit: p.Commit, Err: cause}
 }
 
+// resume marks the project active once its config, Linear and Notion
+// checks all pass.
 func (e *Env) resume(ctx context.Context, p *Project) {
 	changed, err := e.Store.SetProjectState(ctx, store.ProjectState{
 		Project: p.Name, Status: store.StatusActive, Commit: p.Commit,
@@ -198,6 +203,6 @@ func (e *Env) resume(ctx context.Context, p *Project) {
 	}
 	if changed {
 		e.Log.Info("project resumed", "project", p.Name, "commit", p.Commit)
-		e.Notify.Send(notify.Event{Project: p.Name, Text: fmt.Sprintf("config valid again at %.7s · resumed", p.Commit)})
+		e.Notify.Send(notify.Event{Project: p.Name, Text: fmt.Sprintf("checks pass again at %.7s · resumed", p.Commit)})
 	}
 }

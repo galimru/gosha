@@ -63,7 +63,7 @@ func TestReviewFixRound(t *testing.T) {
 }
 
 func TestReviewRoundsExhausted(t *testing.T) {
-	h := newHarness(t, "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: x\nreview:\n  max_rounds: 2\n")
+	h := newHarness(t, "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\nreview:\n  max_rounds: 2\n")
 	h.agent.act = commitEach(t)
 	h.agent.review = func(int, string) string { return requestChanges }
 	if err := h.pickup(); err != nil {

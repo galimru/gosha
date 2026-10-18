@@ -72,7 +72,7 @@ func TestReadConfigFailClosed(t *testing.T) {
 	if out, err := exec.Command("git", "-C", u.dir, "init", "--quiet", "--initial-branch=main").CombinedOutput(); err != nil {
 		t.Fatalf("%v %s", err, out)
 	}
-	valid := "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: x\n"
+	valid := "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\n"
 	u.commit(valid)
 
 	home := config.Home(t.TempDir())
@@ -96,7 +96,11 @@ func TestReadConfigFailClosed(t *testing.T) {
 			t.Fatal(err)
 		}
 		p := &Project{Name: "demo", Repo: repo}
-		return p, env.readConfig(ctx, p)
+		err := env.readConfig(ctx, p)
+		if err == nil {
+			env.resume(ctx, p)
+		}
+		return p, err
 	}
 	state := func() *store.ProjectState {
 		ps, _ := st.ProjectState(ctx, "demo")

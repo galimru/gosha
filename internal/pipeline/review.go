@@ -157,7 +157,7 @@ func (t *ticket) runReviewer(ctx context.Context, head string) (*agent.ReviewerR
 	}
 	resultFile := filepath.Join(rp.agent.RunDir, "review.json")
 	prompt, err := agent.RenderPrompt(ctx, t.p.Repo, t.p.Commit, "review.md", tmpl.Data{
-		Project: t.p.Name, Ticket: Ticket(t.issue, nil),
+		Project: t.p.Name, Ticket: Ticket(t.issue, nil), Context: t.kb,
 		Branch: t.run.Branch, BaseBranch: t.run.BaseBranch, ResultFile: resultFile,
 		Diff: capDiff(diff), Round: t.run.ReviewRound + 1, Feedback: tmpl.Feedback{Previous: t.previousRound()},
 	})
@@ -271,7 +271,7 @@ func (t *ticket) feedbackPass(ctx context.Context, round int, fb tmpl.Feedback) 
 	}
 	resultFile := filepath.Join(rp.agent.RunDir, "result.json")
 	prompt, err := agent.RenderPrompt(ctx, t.p.Repo, t.p.Commit, "address.md", tmpl.Data{
-		Project: t.p.Name, Ticket: Ticket(t.issue, t.comments),
+		Project: t.p.Name, Ticket: Ticket(t.issue, t.comments), Context: t.kb,
 		Branch: t.run.Branch, BaseBranch: t.run.BaseBranch, ResultFile: resultFile,
 		Round: round, Feedback: fb,
 	})

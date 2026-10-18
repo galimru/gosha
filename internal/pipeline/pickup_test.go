@@ -24,7 +24,7 @@ var (
 
 func project(t *testing.T) *config.Project {
 	t.Helper()
-	src := "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: x\n"
+	src := "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\n"
 	vars := map[string]string{"LINEAR_CLIENT_ID": "a", "LINEAR_CLIENT_SECRET": "b", "NOTION_TOKEN": "c"}
 	p, _, err := config.ParseProject([]byte(src), "", config.NewSecrets(nil, nil, vars))
 	if err != nil {

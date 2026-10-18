@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/galimru/gosha/internal/gitx"
+	"github.com/galimru/gosha/internal/notion"
 	"github.com/galimru/gosha/internal/tmpl"
 )
 
@@ -132,6 +133,9 @@ func ParseProject(data []byte, commit string, s *Secrets) (*Project, []string, e
 	}
 	if p.Deploy.URL != "" && p.Deploy.Workflow == "" {
 		return nil, nil, fe("deploy.workflow", "required when deploy.url is set")
+	}
+	if _, err := notion.ParsePageID(p.Notion.RootPage); err != nil {
+		return nil, nil, fe("notion.root_page", "must be a Notion page URL or id")
 	}
 	if _, err := p.BranchName(SampleTicket); err != nil {
 		return nil, nil, fe("github.branch", err.Error())
