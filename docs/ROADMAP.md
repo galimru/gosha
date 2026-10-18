@@ -141,7 +141,7 @@ Changes from the plan:
 
 ## M7 — Feedback
 
-Simplifies what M0–M6 built, using the agreed points in [FEEDBACK.md](FEEDBACK.md). Each point's PR moves it into DESIGN.md and removes it from FEEDBACK.md; the two rejected points only need their DESIGN.md fixes (§5.2, §8 feedback table).
+Simplifies what M0–M6 built, from a review of the design after M6. Each point became a commit that updated DESIGN.md; the two rejected proposals (a single round budget, a config snapshot per pickup) are recorded in the DESIGN.md decisions log.
 
 **Status: built** (2026-10-18), in one PR with a commit per point, pending the end-to-end check below on a real project. Gosha isn't live yet, so nothing is migrated: existing migrations were edited in place, and an old `gosha.db` or `~/.gosha/projects/*/worktrees/` should be deleted.
 
@@ -158,7 +158,7 @@ Changes from the plan:
 - **Reporting:** Telegram for alerts and the daily digest, plus a heartbeat ping (14), Notion refresh at pickup only (15), shorter Delivered comment (16)
 - **CLI:** offline `validate`, host checks in `doctor` (18)
 
-**Done when:** FEEDBACK.md has only rejected points left, and a ticket still goes Ready → delivered on a real project.
+**Done when:** every agreed point is in DESIGN.md, and a ticket still goes Ready → delivered on a real project.
 
 ## M8 — Production
 
