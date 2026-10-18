@@ -521,7 +521,7 @@ For the PR's **head SHA**:
 **Linear: an app actor.** Gosha acts on Linear as an **OAuth app**, so comments, state changes and attachments appear as the app (e.g. "Gosha"), not as a person.
 - **Setup:** the operator creates an OAuth application in the Linear workspace (Settings → API) with **Client credentials** enabled, and puts its client id and secret in `secrets.env` (`LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`).
 - **Tokens:** Gosha uses the **`client_credentials` grant** (scopes `read,write,issues:create,comments:create`). No browser or paste-back is needed. Tokens last 30 days and have no refresh token, so Gosha keeps the current one in memory and simply requests a new one on expiry or a 401.
-- `gosha auth linear` checks the credentials and shows which actor Gosha acts as.
+- `gosha doctor` checks the credentials and shows which actor Gosha acts as.
 
 ### 8.7 Deploy watch (if configured)
 Find the newest run of the `deploy.workflow` file for the merge commit (`head_sha`) on the base branch, polling every ~15s, and wait for it to finish (up to `deploy.timeout`). Like waiting for checks, this doesn't spend `agent.timeout`. A re-run keeps the run's id, so the newest attempt is what counts.
@@ -529,7 +529,7 @@ Find the newest run of the `deploy.workflow` file for the merge commit (`head_sh
 - Failure → **Blocked** with the failed jobs and the failing step of each job's log (as for checks, §8.4). The code is already merged, so a human needs to see this.
 - No run within `deploy.timeout`, or still running → **Blocked**, naming the workflow and the merge commit.
 - **Ready again:** with no new comment, Gosha looks at the deploy again (a human may have fixed or re-run it): success → deliver, still failing → Blocked again. With a comment, it's a follow-up PR on the merged code (§8.1), and the implementer is shown the failure.
-- `gosha validate` warns when `.github/workflows/<deploy.workflow>` isn't on the default branch.
+- `gosha validate` fails when `.github/workflows/<deploy.workflow>` isn't in the repo.
 
 ### 8.8 Deliver
 Post the **Delivered** comment, move the ticket to In Review, and notify Telegram. The run is complete.
@@ -677,10 +677,8 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - `gosha init`: run in a local checkout; writes a starter `.gosha/config.yaml` + default prompts to commit
 - `gosha add <repo-url>` / `remove` / `list`
 - `gosha config show <project>`: effective config
-- `gosha auth linear`: checks Gosha's Linear app credentials and shows the actor it acts as (§8.6)
-- `gosha auth status`: checks every identity and shows who Gosha acts as: GitHub App + installations, Linear actor, Notion bot + shared root pages, Telegram bot + channel, Claude token
-- `gosha validate [project]`: config, credentials, Linear states, Notion access
-- `gosha doctor`: host checks (git, claude, PATH tools, permissions)
+- `gosha validate [path]`: an offline check of a repo's `.gosha/config.yaml` (it parses, fields are valid, referenced files exist). It needs no secrets or network, so it can run in the project's CI.
+- `gosha doctor [project]`: everything about the host: git, claude, the sandbox tools, file permissions, the global config, the GitHub App, and for each project (or the one named) its config on the default branch, its secrets, its Linear team, states and actor (§8.6), and Notion access to its root page
 - `gosha status`: projects, active or paused state (and why), the context mirror (pages, last refresh), current ticket and step, usage-limit pause
 - `gosha logs [-f] [--project nextdesk]`
 - `gosha context refresh <project>`: pull the latest from the context source (Notion) into the local mirror
@@ -750,3 +748,4 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - The deploy is found by the merge commit's `head_sha` on the base. A failed deploy goes Blocked; Ready without a comment looks at the deploy again, Ready with a comment opens a follow-up. (M6)
 - The Delivered comment's contents are recorded on the run as they're gathered (implementer results, each posted review, fix rounds, checks, diff, deploy). The implementer result has an optional `left_out` list. (M6)
 - `/restart` lines aren't passed to agents, and ticket comments written during a pickup reach its next implementer pass. (M6)
+- `gosha validate` is an offline check of a repo's config, so it can run in the project's CI; `gosha doctor` checks everything about the host, including credentials, Linear and Notion. (M7)

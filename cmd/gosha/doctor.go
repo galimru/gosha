@@ -16,6 +16,8 @@ import (
 
 	"github.com/galimru/gosha/internal/config"
 	"github.com/galimru/gosha/internal/gitx"
+	"github.com/galimru/gosha/internal/notion"
+	"github.com/galimru/gosha/internal/pipeline"
 )
 
 type check struct {
@@ -25,11 +27,11 @@ type check struct {
 
 func (a *app) doctorCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "doctor",
-		Short: "Check the host: required tools, not root, file permissions, global config",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			checks := a.doctor(cmd.Context())
+		Use:   "doctor [project]",
+		Short: "Check the host: tools, permissions, global config, credentials, and each project's Linear team and Notion access",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			checks := a.doctor(cmd.Context(), args)
 			failed := 0
 			for _, c := range checks {
 				mark := map[string]string{"ok": "✓", "warn": "!", "fail": "✗"}[c.level]
@@ -46,7 +48,7 @@ func (a *app) doctorCmd() *cobra.Command {
 	}
 }
 
-func (a *app) doctor(ctx context.Context) []check {
+func (a *app) doctor(ctx context.Context, projects []string) []check {
 	var cs []check
 	add := func(level, format string, args ...any) { cs = append(cs, check{level, fmt.Sprintf(format, args...)}) }
 
@@ -114,7 +116,81 @@ func (a *app) doctor(ctx context.Context) []check {
 	if !g.Agent.SandboxEnabled() {
 		add("warn", "agent.sandbox is false: agents can read Gosha's secrets; a separate OS user (--user) is the remaining protection")
 	}
+
+	env, err := a.env(ctx)
+	if err != nil {
+		add("fail", "%v", err)
+		return cs
+	}
+	if info, err := env.App.Info(ctx); err != nil {
+		add("fail", "GitHub App: %v", err)
+	} else {
+		add("ok", "GitHub App %s (acts as %s)", info.Name, info.BotLogin())
+	}
+	if len(projects) == 0 {
+		projects = names
+	}
+	for _, name := range projects {
+		if err := a.checkProject(name); err != nil {
+			add("fail", "%v", err)
+			continue
+		}
+		for _, c := range a.doctorProject(ctx, env, name) {
+			cs = append(cs, check{c.level, name + ": " + c.msg})
+		}
+	}
 	return cs
+}
+
+// doctorProject checks what a project's runs need: its config on the
+// default branch, its secrets, its Linear team and states, and Notion
+// access to its root page.
+func (a *app) doctorProject(ctx context.Context, env *pipeline.Env, name string) []check {
+	var cs []check
+	add := func(level, format string, args ...any) { cs = append(cs, check{level, fmt.Sprintf(format, args...)}) }
+	p, err := env.LoadProject(ctx, name)
+	if err != nil {
+		add("fail", "%v", err)
+		return cs
+	}
+	add("ok", "config at %s@%.7s (%s)", p.Base, p.Commit, p.GitHub)
+	for _, w := range p.Warnings {
+		add("warn", "%s", w)
+	}
+	lin, err := env.ConnectLinear(ctx, p)
+	if err != nil {
+		add("fail", "linear: %v", err)
+	} else if v, err := lin.Client.Viewer(ctx); err != nil {
+		add("fail", "linear: %v", err)
+	} else {
+		add("ok", "Linear team %s (%s) as %s, states %q %q %q %q", lin.Team.Key, lin.Team.Name, v.Name,
+			lin.States.Ready.Name, lin.States.InProgress.Name, lin.States.InReview.Name, lin.States.Blocked.Name)
+	}
+	nc := notion.New(p.Creds.NotionToken)
+	bot, err := nc.Me(ctx)
+	if err != nil {
+		add("fail", "notion: %v", err)
+		return cs
+	}
+	root, _ := notion.ParsePageID(p.Config.Notion.RootPage)
+	page, err := nc.Page(ctx, root)
+	switch {
+	case errors.Is(err, notion.ErrNoAccess):
+		add("fail", "notion: can't read the root page: share it with the %q integration (%v)", bot.Name, err)
+	case err != nil:
+		add("fail", "notion: %v", err)
+	default:
+		add("ok", "Notion root page %q (as %s in %s)", page.Title(), bot.Name, bot.Bot.WorkspaceName)
+	}
+	return cs
+}
+
+// checkProject fails unless name is a registered project.
+func (a *app) checkProject(name string) error {
+	if _, err := os.Stat(a.home.Project(name).Repo()); err != nil {
+		return fmt.Errorf("no project %q: see `gosha list`", name)
+	}
+	return nil
 }
 
 func toolVersion(ctx context.Context, tool string) (string, error) {

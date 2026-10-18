@@ -168,14 +168,3 @@ Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejec
 **Today (§7, §8.3):** the reviewer runs tests in a throwaway clone, after `agent.setup`, with the diff cut at 100 KB.
 
 **Change:** the reviewer reads and runs `git diff`; CI runs the tests. No setup, no writable Bash, no `.Diff` truncation.
-
-## 18. Clear split between `validate` and `doctor`
-
-**Status:** agreed
-
-**Today (§11.5):** `validate`, `doctor`, `auth linear` and `auth status` overlap. `validate` also checks credentials, Linear states and Notion access, so it can't run in a project's CI, where those secrets aren't available.
-
-**Change:**
-- `gosha validate [path]`: an offline check of `.gosha/config.yaml` (YAML parses, fields are valid, referenced files exist). It needs no secrets or network, so it can run in the project's CI.
-- `gosha doctor [project]`: everything about the host: git, claude, the sandbox, file permissions, credentials, the Linear team and states, and Notion access. It replaces `auth linear` and `auth status`.
-- `gosha service install|uninstall|start|stop|restart|status` stays as is: it hides the differences between systemd and launchd.
