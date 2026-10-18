@@ -1,0 +1,102 @@
+package store
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func open(t *testing.T) (*Store, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "gosha.db")
+	s, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	return s, path
+}
+
+func TestMigrateTwice(t *testing.T) {
+	s, path := open(t)
+	s.Close()
+	s2, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	s2.Close()
+}
+
+func TestRuns(t *testing.T) {
+	ctx := context.Background()
+	s, _ := open(t)
+	if r, err := s.OpenRun(ctx, "p", "NXT-1"); err != nil || r != nil {
+		t.Fatalf("no run expected: %v %v", r, err)
+	}
+	r := &Run{Project: "p", TicketID: "NXT-1", Mode: "fresh", Branch: "gosha/NXT-1-x"}
+	if err := s.CreateRun(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.OpenRun(ctx, "p", "NXT-1")
+	if err != nil || got == nil || got.ID != r.ID || got.Branch != r.Branch {
+		t.Fatalf("OpenRun = %+v, %v", got, err)
+	}
+	if runs, _ := s.OpenRuns(ctx); len(runs) != 1 {
+		t.Errorf("OpenRuns = %d", len(runs))
+	}
+	if err := s.FinishRun(ctx, r.ID, "delivered"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.OpenRun(ctx, "p", "NXT-1"); got != nil {
+		t.Errorf("run still open: %+v", got)
+	}
+}
+
+func TestCommentCursor(t *testing.T) {
+	ctx := context.Background()
+	s, _ := open(t)
+	at := time.Date(2026, 10, 18, 9, 0, 0, 0, time.UTC)
+	if err := s.SetCommentCursor(ctx, "p", "NXT-1", Cursor{CommentID: "c1", At: at}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetCommentCursor(ctx, "p", "NXT-1", Cursor{CommentID: "c2", At: at.Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.CommentCursor(ctx, "p", "NXT-1")
+	if err != nil || c.CommentID != "c2" || !c.At.Equal(at.Add(time.Hour)) {
+		t.Errorf("cursor = %+v, %v", c, err)
+	}
+}
+
+func TestProjectStateTransitions(t *testing.T) {
+	ctx := context.Background()
+	s, _ := open(t)
+	steps := []struct {
+		st      ProjectState
+		changed bool
+	}{
+		{ProjectState{Project: "p", Status: StatusActive}, false}, // first sighting, healthy: nothing to announce
+		{ProjectState{Project: "p", Status: StatusPaused, Reason: "bad yaml"}, true},
+		{ProjectState{Project: "p", Status: StatusPaused, Reason: "bad yaml"}, false},
+		{ProjectState{Project: "p", Status: StatusPaused, Reason: "missing team"}, true},
+		{ProjectState{Project: "p", Status: StatusActive, Commit: "abc"}, true},
+	}
+	for i, step := range steps {
+		changed, err := s.SetProjectState(ctx, step.st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if changed != step.changed {
+			t.Errorf("step %d: changed = %v, want %v", i, changed, step.changed)
+		}
+	}
+	st, _ := s.ProjectState(ctx, "p")
+	if st.Status != StatusActive || st.Commit != "abc" {
+		t.Errorf("state = %+v", st)
+	}
+	s.DeleteProjectState(ctx, "p")
+	if st, _ := s.ProjectState(ctx, "p"); st != nil {
+		t.Errorf("not deleted: %+v", st)
+	}
+}

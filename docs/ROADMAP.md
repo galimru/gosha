@@ -31,9 +31,12 @@ Throwaway code. The goal is answers, not features. Any "no" updates DESIGN.md be
 
 ## M1 — Skeleton
 
+**Status: built** (2026-10-18), pending the end-to-end check below on a real project. GitHub App auth and part of gitx moved here from M2 because `add` must clone private repos. Follow-up detection (a merged PR exists) needs the PR API and stays in M2; the M1 dry-run reports fresh, fresh (restart) or resume.
+
 - Global config (`~/.gosha/config.yaml`), project config read from `origin/<default>` in a bare clone, fail-closed loading
 - `${VAR}` secrets: shared + per-project files, literal-secret rejection, redaction
 - SQLite store
+- GitHub App installation tokens and a gitx subset (bare clone, fetch, `git show`) with per-command token injection, so `add` can clone private repos
 - Root refusal
 - Linear client: `client_credentials` token minting, poll Ready, transitions, comments, attachments, state mapping with defaults, state-type detection
 - Telegram notifier (async queue)
@@ -44,8 +47,8 @@ Throwaway code. The goal is answers, not features. Any "no" updates DESIGN.md be
 
 ## M2 — Ticket → PR
 
-- gitx: bare clone, fetch, worktrees, push with an injected App token
-- GitHub App auth and API client (go-github)
+- gitx: worktrees, push with an injected App token (bare clone and fetch landed in M1)
+- GitHub API client (go-github) for PRs (App auth landed in M1)
 - Claude runner as validated in M0 (generated settings, `dontask` allowlist, sandbox, scrubbed env, process group), implementer prompt (`implement.md` default + repo override), result contract
 - Branch name template, PR creation, Linear attachment, In Progress → Blocked on failure
 - `gosha run <project>`: foreground loop for one project; `--once` for a single ticket

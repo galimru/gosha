@@ -1,6 +1,6 @@
 # Gosha — Design
 
-> Status: **agreed plan**. Nothing here is implemented yet. Implementation order: [ROADMAP.md](ROADMAP.md). Assumptions checked in M0: [SPIKES.md](SPIKES.md).
+> Status: **agreed plan**, implemented up to M1 (skeleton). Implementation order: [ROADMAP.md](ROADMAP.md). Assumptions checked in M0: [SPIKES.md](SPIKES.md).
 
 ## 1. Overview
 
@@ -123,6 +123,7 @@ internal/github/      GitHub REST API via go-github + ghinstallation: App auth, 
 internal/notify/      event types, Telegram sender, rate limiting, retries
 internal/gitx/        clone, fetch, worktree, merge, push (shells out to the git CLI; token injected per command)
 internal/agent/       claude CLI runner, prompt rendering, result parsing
+internal/tmpl/        template data model + functions shared by prompts and the branch pattern (§5.3)
 internal/pipeline/    per-ticket state machine, limits, recovery
 internal/store/       SQLite persistence
 internal/daemon/      supervisors, scheduler, graceful shutdown
@@ -271,7 +272,7 @@ linear:
   2. `~/.gosha/secrets.env` (shared)
   3. the process environment
 
-  The files are `KEY=value` lines with `600` permissions, and they live only on the host.
+  The files are `KEY=value` lines with `600` permissions, and they live only on the host. A secrets file (or the GitHub App key) that group or others can read is refused, the same fail-closed way as an invalid config.
 - **Shared keys:**
   - `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`
   - `NOTION_TOKEN`
@@ -280,6 +281,7 @@ linear:
 - **Only braced `${VAR}` is recognised.** A bare `$` is left alone (prompts and regexes contain them), and `$${` escapes a literal `${`.
 - **Substituted after YAML parsing,** into string values only. A secret containing `:` or `#` can't break the file's structure.
 - **Missing variables are errors:** an unset or empty variable fails `gosha validate` and stops that project, naming the file and field. It never silently becomes an empty string.
+- **Defaults:** an omitted secret field defaults to its shared key (e.g. `linear.client_secret` → `${LINEAR_CLIENT_SECRET}`, `claude.oauth_token` → `${CLAUDE_CODE_OAUTH_TOKEN}`, `telegram.bot_token` → `${TELEGRAM_BOT_TOKEN}`).
 - **Literal secrets are rejected:** secret fields (`client_secret`, `token`, `bot_token`, `oauth_token`) must use `${VAR}`. A literal value fails validation, so a token can't be committed by accident.
 - **Redaction:** resolved secret values are scrubbed from logs, Telegram messages and agent transcripts.
 
@@ -434,7 +436,7 @@ All of them go through the same **address** step (`address.md`, data in `.Feedba
 ### 8.1 Pickup
 1. The poller lists Ready issues in the team.
 2. It skips any issue whose "blocked by" issues are not yet **In Review or Done**. (In Review means the code is already merged, so it's safe to build on.)
-3. It orders the rest by priority, then by creation time, and takes one if the project is idle.
+3. It orders the rest by priority (Urgent first, Linear's "No priority" last), then by creation time, and takes one if the project is idle.
 4. Claim: move the ticket to In Progress, record the run, and notify Telegram.
 5. Decide the mode:
    - `/restart` in the new comments → close the PR, delete the branch → **fresh**
@@ -654,7 +656,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - `gosha context refresh <project>`: pull the latest from the context source (Notion) into the local mirror
 - `gosha context path <project>`: print where the mirror lives
 - `gosha context show <project>`: print `INDEX.md`, the page tree the agent starts from
-- `gosha run <project> [--once] [--ticket NXT-12] [--dry-run]`: foreground loop for one project, for development and prompt tuning. `--once` handles a single ticket, `--dry-run` only reports what would happen.
+- `gosha run <project> [--once] [--ticket NXT-12] [--dry-run]`: foreground loop for one project, for development and prompt tuning. `--once` handles a single ticket. `--dry-run` does a single pickup pass and reports what would happen (pickup, queue, skipped tickets and why, mode, branch) to stdout and Telegram, without changing anything in Linear or GitHub.
 - `gosha secrets edit`: opens `secrets.env` in `$EDITOR`
 - `gosha service install|uninstall|start|stop|restart|status`
 - `gosha daemon`
