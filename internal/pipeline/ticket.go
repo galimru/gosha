@@ -132,9 +132,6 @@ func (e *Env) Pass(ctx context.Context, name, only string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	for _, w := range p.Warnings {
-		e.Log.Warn("config warning", "project", name, "warning", w)
-	}
 	lin, err := e.ConnectLinear(ctx, p)
 	if err != nil {
 		return false, err
@@ -507,9 +504,13 @@ func (t *ticket) prepare(ctx context.Context, checkout, role string) (fresh bool
 
 func (t *ticket) spec(prompt, dir string, rp runPaths) agent.Spec {
 	cfg := t.p.Config.Agent
+	mode := agent.ModeDontAsk
+	if !t.e.Global.Agent.SandboxEnabled() {
+		mode = agent.ModeAuto
+	}
 	return agent.Spec{
 		Binary: t.e.ClaudeBinary, Prompt: prompt, Dir: dir, SettingsFile: rp.settings, Transcript: rp.transcript,
-		Mode: cfg.PermissionMode, Model: cfg.Model,
+		Mode: mode, Model: cfg.Model,
 		OAuthToken: t.p.Creds.ClaudeToken, ConfigDir: t.e.Home.Project(t.p.Name).Claude(), TmpDir: rp.agent.RunDir,
 		Git: t.bot, Redact: t.e.Redactor.Redact, AddDirs: nonEmpty(t.kb.Dir),
 	}

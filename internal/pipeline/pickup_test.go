@@ -25,7 +25,7 @@ var (
 func project(t *testing.T) *config.Project {
 	t.Helper()
 	src := "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\n"
-	p, _, err := config.ParseProject([]byte(src), "")
+	p, err := config.ParseProject([]byte(src), "")
 	if err != nil {
 		t.Fatal(err)
 	}

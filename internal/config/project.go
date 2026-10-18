@@ -69,21 +69,19 @@ type Deploy struct {
 }
 
 type ProjectAgent struct {
-	Timeout        time.Duration `yaml:"timeout"`
-	Model          string        `yaml:"model"`
-	PermissionMode string        `yaml:"permission_mode" default:"dontask"`
+	Timeout time.Duration `yaml:"timeout"`
+	Model   string        `yaml:"model"`
 }
 
 // ParseProject decodes and validates a project config read from commit.
-// It returns warnings that don't stop the project.
-func ParseProject(data []byte, commit string) (*Project, []string, error) {
+func ParseProject(data []byte, commit string) (*Project, error) {
 	file := ProjectFile
 	if commit != "" {
 		file = fmt.Sprintf("%s@%.7s", ProjectFile, commit)
 	}
 	p := &Project{}
 	if err := decode(file, data, p); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	p.Commit = commit
 	setDefault(&p.Review.MaxRounds, 3)
@@ -98,40 +96,30 @@ func ParseProject(data []byte, commit string) (*Project, []string, error) {
 	fe := func(field, msg string) error { return &FieldError{File: file, Field: field, Err: errors.New(msg)} }
 	switch {
 	case p.Name == "":
-		return nil, nil, fe("name", "required")
+		return nil, fe("name", "required")
 	case !projectName.MatchString(p.Name):
-		return nil, nil, fe("name", "must be lowercase letters, digits, '-' or '_'")
+		return nil, fe("name", "must be lowercase letters, digits, '-' or '_'")
 	case p.Linear.Team == "":
-		return nil, nil, fe("linear.team", "required")
+		return nil, fe("linear.team", "required")
 	case p.Notion.RootPage == "":
-		return nil, nil, fe("notion.root_page", "required")
+		return nil, fe("notion.root_page", "required")
 	case p.Review.MaxRounds < 1:
-		return nil, nil, fe("review.max_rounds", "must be at least 1")
+		return nil, fe("review.max_rounds", "must be at least 1")
 	case p.Checks.MaxRounds < 1:
-		return nil, nil, fe("checks.max_rounds", "must be at least 1")
+		return nil, fe("checks.max_rounds", "must be at least 1")
 	}
 	switch p.GitHub.MergeMethod {
 	case "squash", "merge", "rebase":
 	default:
-		return nil, nil, fe("github.merge_method", "must be squash, merge or rebase")
-	}
-	switch p.Agent.PermissionMode {
-	case "dontask", "auto", "bypass":
-	default:
-		return nil, nil, fe("agent.permission_mode", "must be dontask, auto or bypass")
+		return nil, fe("github.merge_method", "must be squash, merge or rebase")
 	}
 	if p.Deploy.URL != "" && p.Deploy.Workflow == "" {
-		return nil, nil, fe("deploy.workflow", "required when deploy.url is set")
+		return nil, fe("deploy.workflow", "required when deploy.url is set")
 	}
 	if _, err := notion.ParsePageID(p.Notion.RootPage); err != nil {
-		return nil, nil, fe("notion.root_page", "must be a Notion page URL or id")
+		return nil, fe("notion.root_page", "must be a Notion page URL or id")
 	}
-
-	var warns []string
-	if p.Agent.PermissionMode == "bypass" {
-		warns = append(warns, "agent.permission_mode is bypass: file tools can write anywhere the service user can")
-	}
-	return p, warns, nil
+	return p, nil
 }
 
 func setDefault[T comparable](v *T, def T) {

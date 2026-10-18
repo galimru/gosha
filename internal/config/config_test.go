@@ -20,12 +20,9 @@ notion:
 `
 
 func TestProjectDefaults(t *testing.T) {
-	p, warns, err := ParseProject([]byte(minimalProject), "a1b2c3d4e5")
+	p, err := ParseProject([]byte(minimalProject), "a1b2c3d4e5")
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(warns) != 0 {
-		t.Errorf("unexpected warnings: %v", warns)
 	}
 	if p.Linear.States != (States{"Ready", "In Progress", "In Review", "Blocked"}) {
 		t.Errorf("state defaults: %+v", p.Linear.States)
@@ -33,14 +30,14 @@ func TestProjectDefaults(t *testing.T) {
 	if p.Checks.StartGrace != 3*time.Minute || p.Agent.Timeout != time.Hour || p.Review.MaxRounds != 3 {
 		t.Errorf("limit defaults: %+v %+v", p.Checks, p.Agent)
 	}
-	if p.Agent.PermissionMode != "dontask" || p.GitHub.MergeMethod != "squash" {
-		t.Errorf("mode defaults: %+v %+v", p.Agent, p.GitHub)
+	if p.GitHub.MergeMethod != "squash" {
+		t.Errorf("merge method default: %+v", p.GitHub)
 	}
 }
 
 func TestProjectStateOverrideSubset(t *testing.T) {
 	src := strings.Replace(minimalProject, "team: NXT", "team: NXT\n  states:\n    ready: Queued", 1)
-	p, _, err := ParseProject([]byte(src), "")
+	p, err := ParseProject([]byte(src), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,15 +60,14 @@ func TestProjectErrors(t *testing.T) {
 			src:   strings.Replace(minimalProject, "team: NXT", "team: \"\"", 1),
 			field: "linear.team", msg: "required",
 		},
-		"bad permission mode": {
-			src:   minimalProject + "agent:\n  permission_mode: yolo\n",
-			field: "agent.permission_mode",
+		"permission mode": {
+			src: minimalProject + "agent:\n  permission_mode: auto\n", msg: "field permission_mode not found",
 		},
 		"bad yaml": {src: "name: [", msg: "yaml"},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, _, err := ParseProject([]byte(c.src), "abcdef1234")
+			_, err := ParseProject([]byte(c.src), "abcdef1234")
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -89,17 +85,6 @@ func TestProjectErrors(t *testing.T) {
 				t.Errorf("error %q doesn't mention %q", err, c.msg)
 			}
 		})
-	}
-}
-
-func TestProjectWarnings(t *testing.T) {
-	src := minimalProject + "agent:\n  permission_mode: bypass\n"
-	_, warns, err := ParseProject([]byte(src), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(warns) != 1 {
-		t.Errorf("warnings = %v", warns)
 	}
 }
 

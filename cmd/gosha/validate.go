@@ -22,15 +22,10 @@ func (a *app) validateCmd() *cobra.Command {
 			if len(args) == 1 {
 				dir = args[0]
 			}
-			warns, err := validateRepo(dir)
-			if err != nil {
+			if err := validateRepo(dir); err != nil {
 				return err
 			}
-			w := cmd.OutOrStdout()
-			for _, warn := range warns {
-				fmt.Fprintf(w, "! %s\n", warn)
-			}
-			fmt.Fprintf(w, "✓ %s\n", filepath.Join(dir, config.ProjectFile))
+			fmt.Fprintf(cmd.OutOrStdout(), "✓ %s\n", filepath.Join(dir, config.ProjectFile))
 			return nil
 		},
 	}
@@ -38,22 +33,22 @@ func (a *app) validateCmd() *cobra.Command {
 
 // validateRepo checks the config in a local checkout of a project's repo,
 // and that the files it refers to exist.
-func validateRepo(dir string) ([]string, error) {
+func validateRepo(dir string) error {
 	data, err := os.ReadFile(filepath.Join(dir, config.ProjectFile))
 	if err != nil {
-		return nil, err
+		return err
 	}
-	cfg, warns, err := config.ParseProject(data, "")
+	cfg, err := config.ParseProject(data, "")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if wf := cfg.Deploy.Workflow; wf != "" {
 		path := filepath.Join(".github", "workflows", wf)
 		if _, err := os.Stat(filepath.Join(dir, path)); errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("deploy.workflow: %s doesn't exist", path)
+			return fmt.Errorf("deploy.workflow: %s doesn't exist", path)
 		} else if err != nil {
-			return nil, err
+			return err
 		}
 	}
-	return warns, nil
+	return nil
 }

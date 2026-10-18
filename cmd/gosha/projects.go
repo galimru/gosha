@@ -70,7 +70,7 @@ func (a *app) addCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cfg, warns, err := config.ParseProject(data, commit)
+			cfg, err := config.ParseProject(data, commit)
 			if err != nil {
 				return err
 			}
@@ -86,9 +86,6 @@ func (a *app) addCmd() *cobra.Command {
 			}
 			if _, err := env.Store.SetProjectState(ctx, store.ProjectState{Project: cfg.Name, Status: store.StatusActive, Commit: commit}); err != nil {
 				return err
-			}
-			for _, w := range warns {
-				fmt.Fprintln(cmd.ErrOrStderr(), "warning:", w)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "added %s (%s, %s @ %.7s, Linear team %s)\n", cfg.Name, repo, base, commit, cfg.Linear.Team)
 			return nil

@@ -91,8 +91,8 @@ func TestRun(t *testing.T) {
 
 func TestRunModes(t *testing.T) {
 	for mode, want := range map[string]string{
-		ModeAuto:   "--permission-mode auto --permission-prompts none",
-		ModeBypass: "--dangerously-skip-permissions",
+		ModeAuto:    "--permission-mode auto --permission-prompts none",
+		ModeDontAsk: "--permission-mode dontAsk --permission-prompts none",
 	} {
 		args := strings.Join(Spec{Mode: mode}.args(), " ")
 		if !strings.Contains(args, want) {

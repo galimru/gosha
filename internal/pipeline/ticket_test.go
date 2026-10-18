@@ -274,7 +274,7 @@ func newHarness(t *testing.T, cfg string) *harness {
 	}
 	t.Cleanup(func() { st.Close() })
 	commit, _ := repo.RevParse(ctx, "origin/main")
-	pc, _, err := config.ParseProject([]byte(cfg), commit)
+	pc, err := config.ParseProject([]byte(cfg), commit)
 	if err != nil {
 		t.Fatal(err)
 	}

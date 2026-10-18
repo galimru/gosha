@@ -148,7 +148,7 @@ Configuration is split cleanly in two:
 concurrency: 1                 # max simultaneous agent runs across all projects
 
 agent:
-  sandbox: true                # default; false = explicit opt-out, see §7.1
+  sandbox: true                # default; false = no sandbox and auto mode, see §7.1
   writable: []                 # extra paths agents may write (toolchain caches beyond the defaults, §7.1)
 
 github_app:                    # one app, installed on every project repo
@@ -214,7 +214,6 @@ deploy:                        # optional
 agent:
   timeout: 60m                 # total agent working time per pickup (waiting for CI doesn't count)
   model: ""                    # optional override
-  permission_mode: dontask     # dontask (default) | auto | bypass; see §7.1
 ```
 
 ### 5.3 Prompts
@@ -353,18 +352,20 @@ The two layers need different shapes, because they resolve conflicts differently
 - **OS sandbox:** `denyRead` covers all of `~/.gosha`, and `allowRead`/`allowWrite` re-allow the run's checkout and temp directory inside it. A more specific allow wins here.
 - **Permission rules:** a deny always beats an allow, so `Read(~/.gosha/**)` would also hide the checkout from the Read tool. Gosha instead denies every entry of `~/.gosha` *around* the run's paths (other projects, `secrets.env`, the database, the bare clone, other tickets' checkouts, transcripts…). These entries are listed when the run starts, with no globs.
 
-- **Permission mode** (`agent.permission_mode`):
-  - `dontask` (default): `--permission-mode dontAsk --permission-prompts none`. Only what the generated allow rules list is permitted; everything else is denied without a prompt. Fully unattended. The allow rules are: `Read`, `Bash` (confined by the sandbox), web fetch/search, and `Edit` inside the checkout and the run's temp directory only.
-  - `auto`: `--permission-mode auto --permission-prompts none`. Claude's classifier approves or blocks each action. Works headless; in M0 it blocked no legitimate step.
-  - `bypass`: `--dangerously-skip-permissions`. Everything not explicitly denied is allowed, so the Write and Edit tools can write anywhere the service user can. Explicit opt-in only; `gosha doctor` warns about it.
-- **Deny rules** apply in every mode: no `Read` or `Edit` anywhere in `~/.gosha` except the run's checkout and temp directory, and no `Edit` in the context copy.
+- **One switch, `agent.sandbox` in the global config, picks both the sandbox and the permission mode.** It's host-level only: no project config, and so no merged PR, can change it.
+
+  | `agent.sandbox` | Sandbox | Permission mode |
+  |---|---|---|
+  | `true` (default) | on | `dontask`: `--permission-mode dontAsk --permission-prompts none`. Only what the generated allow rules list is permitted; everything else is denied without a prompt. The allow rules are: `Read`, `Bash` (confined by the sandbox), web fetch/search, and `Edit` inside the checkout and the run's temp directory only. |
+  | `false` | off | `auto`: `--permission-mode auto --permission-prompts none`. Claude's classifier approves or blocks each action (in M0 it blocked no legitimate step). Without the sandbox, `dontask` would let Bash read secrets and write anywhere while still denying other tools: no protection, same friction. |
+- **Deny rules** apply in both modes: no `Read` or `Edit` anywhere in `~/.gosha` except the run's checkout and temp directory, and no `Edit` in the context copy.
 - **Reviewer:** read-only. Its edit and write tools are *removed* (`--disallowedTools Edit,Write,NotebookEdit`), which holds in any mode, and it gets no `Edit` allow rules. In the sandbox its Bash can read its clone but write only the run's temp directory (for the result file), so it runs no tests or builds: CI does. With the sandbox off, only the removed tools and the `auto` classifier stop it from writing, which is why it still runs in its own clone and never in the implementer's checkout.
 - **Sandbox:** Gosha enables **Claude Code's built-in sandbox** (OS-level: Seatbelt on macOS, bubblewrap on Linux) for every agent run, with `failIfUnavailable: true` and `allowUnsandboxedCommands: false` (the agent can't ask to run a command outside it):
   - **Writable:** the ticket's checkout, the run's temp directory, and toolchain caches (the reviewer: only the run's temp directory). The default cache list depends on the OS (e.g. `~/.cache`, `~/go`, `~/.npm`, and `~/Library/Caches` on macOS), plus `agent.writable` from the global config. The sandbox can't create the missing parent of an allowed directory, so Gosha creates every writable directory before the run.
   - **Read-only:** the run's frozen context copy.
   - **No access:** `~/.gosha`, i.e. secrets, the GitHub App key, other projects and the database.
   - **Network:** allowed (dependency installs need it).
-- **If the sandbox can't be enforced** on a host (unsupported OS setup, missing Linux packages), Claude refuses to start (`failIfUnavailable`) and Gosha **refuses to start agents** unless the operator opts in with `agent.sandbox: false` in the global config. `gosha doctor` warns that agents can then read Gosha's secrets, and that a separate OS user (`--user`, §11.2) is the remaining protection.
+- **If the sandbox can't be enforced** on a host (unsupported OS setup, missing Linux packages), Claude refuses to start (`failIfUnavailable`) and Gosha **refuses to start agents** unless the operator opts in with `agent.sandbox: false` in the global config. `gosha doctor` warns that agents then run in `auto` mode and can read Gosha's secrets, and that a separate OS user (`--user`, §11.2) is the remaining protection.
 - **Environment:** agents get a scrubbed environment. No Gosha secrets, `ANTHROPIC_API_KEY` or GitHub/Linear tokens. Only:
   - `CLAUDE_CODE_OAUTH_TOKEN`, `PATH`, `HOME`
   - `CLAUDE_CONFIG_DIR` (Gosha's own settings directory, §11.2) and `TMPDIR` (the run's temp directory)
@@ -565,7 +566,7 @@ On startup, for each ticket that is In Progress in Linear **and** has an open ru
 Gosha runs as an **existing regular user**, normally the one who installs it. Gosha never creates OS accounts. **Root isn't allowed.**
 
 - **Default:** `gosha service install` installs the service for the invoking user (`$SUDO_USER` when run through `sudo`). `--user <name>` picks another existing account.
-- **Root is refused:** if the target user would be root, `gosha daemon`, `gosha run` and `gosha service install` all fail, suggesting a regular user be created first (e.g. `adduser deploy` on a VPS). Agents run unattended (§7.1) and execute commands derived from ticket text. As root, those commands would own the machine, which is also why Claude Code refuses bypass mode as root.
+- **Root is refused:** if the target user would be root, `gosha daemon`, `gosha run` and `gosha service install` all fail, suggesting a regular user be created first (e.g. `adduser deploy` on a VPS). Agents run unattended (§7.1) and execute commands derived from ticket text. As root, those commands would own the machine, which is also why Claude Code refuses to skip permissions as root.
 - **Want more isolation?** Create a separate regular account yourself and install with `--user <it>`. It's an ordinary account, so nothing special is needed from Gosha.
 - **Nothing tied to a person's login:** GitHub goes through the App, Claude through the setup token, everything else through the secrets files. Gosha never uses the user's `gh` login, SSH keys, git identity or OS keychain, so moving Gosha to another user or host is just moving `~/.gosha`.
 - **Claude:** the `claude` CLI must be on the service user's `PATH`. The token from `claude setup-token` can be generated anywhere, because it's tied to the Claude subscription, not the OS user.
@@ -683,7 +684,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - One GitHub identity: the Gosha GitHub App (no PRs as the human). Reviews are `COMMENT` reviews with a verdict.
 - A blocker is satisfied once it's In Review (its code is merged) or Done.
 - Linear states: Ready / In Progress / In Review / Blocked, with default names that can be overridden. Done and Canceled are recognised by state type. Only humans move tickets to Done. Backlog/Todo pause, Canceled abandons.
-- Agents run unattended in `dontask` mode by default (`auto` optional, `bypass` opt-in with a warning): an allowlist confines file tools to the checkout and temp directory, and Claude Code's OS-level sandbox confines Bash and blocks `~/.gosha`. Without a sandbox, Gosha refuses to run agents unless explicitly opted out. (Changed after M0: bypass let file tools write outside the sandbox.)
+- Agents run unattended in `dontask` mode: an allowlist confines file tools to the checkout and temp directory, and Claude Code's OS-level sandbox confines Bash and blocks `~/.gosha`. Without a sandbox, Gosha refuses to run agents unless explicitly opted out. (Changed after M0: bypass let file tools write outside the sandbox.) The global `agent.sandbox` switch picks both the sandbox and the mode: off means `auto` mode; there's no per-project mode and no bypass. (M7)
 - Linear identity: an OAuth app using the `client_credentials` grant; no personal key, no browser flow. (Changed after M0.)
 - Feedback model: review, human PR comments, CI failures and conflicts all go through the address step, limited by `review.max_rounds` and `checks.max_rounds`.
 - Notion mirror: page tree → file tree (`README.md` for pages with children, `INDEX.md` map). Databases aren't mirrored for now.

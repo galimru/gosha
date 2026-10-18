@@ -34,22 +34,6 @@ Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejec
 - **Trade-off:** the Read tool can see other tickets' workspaces (repo code, not credentials).
 - **Bonus:** everything in `workspaces/` can be rebuilt; cleanup is removing a ticket's folder, and a host move can skip it.
 
-## 2. One switch picks the sandbox and the permission mode
-
-**Status:** agreed
-
-**Today (§5.1, §5.2, §7.1):** two independent knobs. `agent.sandbox` in the global config, and `agent.permission_mode` (`dontask`, `auto`, `bypass`) in the repo config. Turning the sandbox off alone leaves `dontask`, where Bash can read secrets and write anywhere but other tools are still denied: no protection, same friction. And because the mode is in the repo config, a merged PR can switch a project to `bypass`.
-
-**Change:** the global `agent.sandbox` switch decides both.
-
-| `agent.sandbox` | Sandbox | Permission mode |
-|---|---|---|
-| `true` (default) | on | `dontask` |
-| `false` | off | `auto` (Claude's classifier approves or blocks each action) |
-
-- `agent.permission_mode` is removed from the repo config, and `bypass` is gone.
-- The setting is host-level only; no per-project switch.
-
 ## 4. Report the deploy instead of blocking on it
 
 **Status:** agreed

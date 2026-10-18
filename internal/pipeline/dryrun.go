@@ -15,9 +15,6 @@ func (e *Env) DryRun(ctx context.Context, name, ticket string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, w := range p.Warnings {
-		e.Log.Warn("config warning", "project", name, "warning", w)
-	}
 	lin, err := e.ConnectLinear(ctx, p)
 	if err != nil {
 		return "", err

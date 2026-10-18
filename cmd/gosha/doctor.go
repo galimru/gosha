@@ -114,7 +114,7 @@ func (a *app) doctor(ctx context.Context, projects []string) []check {
 	}
 	add("ok", "global config %s (concurrency %d)", a.home.Config(), g.Concurrency)
 	if !g.Agent.SandboxEnabled() {
-		add("warn", "agent.sandbox is false: agents can read Gosha's secrets; a separate OS user (--user) is the remaining protection")
+		add("warn", "agent.sandbox is false: agents run in auto mode without the sandbox and can read Gosha's secrets; a separate OS user (--user) is the remaining protection")
 	}
 
 	env, err := a.env(ctx)
@@ -154,9 +154,6 @@ func (a *app) doctorProject(ctx context.Context, env *pipeline.Env, name string)
 		return cs
 	}
 	add("ok", "config at %s@%.7s (%s)", p.Base, p.Commit, p.GitHub)
-	for _, w := range p.Warnings {
-		add("warn", "%s", w)
-	}
 	lin, err := env.ConnectLinear(ctx, p)
 	if err != nil {
 		add("fail", "linear: %v", err)

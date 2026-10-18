@@ -19,27 +19,27 @@ func TestValidateRepo(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := validateRepo(dir); err == nil {
+	if err := validateRepo(dir); err == nil {
 		t.Error("missing config: expected an error")
 	}
 
 	cfg := "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\n"
 	write(".gosha/config.yaml", cfg)
-	if _, err := validateRepo(dir); err != nil {
+	if err := validateRepo(dir); err != nil {
 		t.Errorf("valid config: %v", err)
 	}
 
 	write(".gosha/config.yaml", cfg+"deploy:\n  workflow: deploy.yml\n")
-	if _, err := validateRepo(dir); err == nil || !strings.Contains(err.Error(), "deploy.yml") {
+	if err := validateRepo(dir); err == nil || !strings.Contains(err.Error(), "deploy.yml") {
 		t.Errorf("missing workflow: %v", err)
 	}
 	write(".github/workflows/deploy.yml", "on: push\n")
-	if _, err := validateRepo(dir); err != nil {
+	if err := validateRepo(dir); err != nil {
 		t.Errorf("with workflow: %v", err)
 	}
 
 	write(".gosha/config.yaml", "name: demo\n")
-	if _, err := validateRepo(dir); err == nil {
+	if err := validateRepo(dir); err == nil {
 		t.Error("invalid config: expected an error")
 	}
 }

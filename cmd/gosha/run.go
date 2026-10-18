@@ -54,7 +54,7 @@ func (a *app) runCmd() *cobra.Command {
 				return fmt.Errorf("claude: %w", err)
 			}
 			if !env.Global.Agent.SandboxEnabled() {
-				a.log.Warn("agent.sandbox is false: agents can read Gosha's secrets")
+				a.log.Warn("agent.sandbox is false: agents run in auto mode without the sandbox and can read Gosha's secrets")
 			}
 			if once {
 				handled, err := env.Pass(ctx, name, ticket)

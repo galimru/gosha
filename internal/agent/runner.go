@@ -15,11 +15,10 @@ import (
 	"time"
 )
 
-// Permission modes (project agent.permission_mode, DESIGN §7.1).
+// Permission modes: dontAsk in the sandbox, auto without it (DESIGN §7.1).
 const (
 	ModeDontAsk = "dontask"
 	ModeAuto    = "auto"
-	ModeBypass  = "bypass"
 )
 
 // Identity is the git author and committer for the agent's commits.
@@ -63,8 +62,6 @@ func (s Spec) args() []string {
 	switch s.Mode {
 	case ModeAuto:
 		args = append(args, "--permission-mode", "auto", "--permission-prompts", "none")
-	case ModeBypass:
-		args = append(args, "--dangerously-skip-permissions")
 	default:
 		args = append(args, "--permission-mode", "dontAsk", "--permission-prompts", "none")
 	}

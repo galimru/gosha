@@ -56,15 +56,14 @@ func (e *Env) review(ctx context.Context, s agent.Spec, resultFile string) (*age
 
 // Project is a project with its config freshly loaded from the default branch.
 type Project struct {
-	Name     string
-	Config   *config.Project
-	Creds    config.Credentials
-	Warnings []string
-	Repo     *gitx.Repo
-	GitHub   gitx.GitHubRepo
-	Install  *github.Installation
-	Base     string // default branch
-	Commit   string // origin/<base> the config was read from
+	Name    string
+	Config  *config.Project
+	Creds   config.Credentials
+	Repo    *gitx.Repo
+	GitHub  gitx.GitHubRepo
+	Install *github.Installation
+	Base    string // default branch
+	Commit  string // origin/<base> the config was read from
 }
 
 // PausedError means the project is paused because of its config: no
@@ -120,7 +119,7 @@ func (e *Env) readConfig(ctx context.Context, p *Project) error {
 	if p.Commit, err = p.Repo.RevParse(ctx, "origin/"+p.Base); err != nil {
 		return fmt.Errorf("%s: %w", p.Name, err)
 	}
-	cfg, warns, err := e.parseConfig(ctx, p)
+	cfg, err := e.parseConfig(ctx, p)
 	if err != nil {
 		return e.pause(ctx, p, err)
 	}
@@ -131,29 +130,29 @@ func (e *Env) readConfig(ctx context.Context, p *Project) error {
 	if p.Creds, err = secrets.ProjectCredentials(); err != nil {
 		return e.pause(ctx, p, err)
 	}
-	p.Config, p.Warnings = cfg, warns
+	p.Config = cfg
 	if cfg.GitHub.DefaultBranch != "" {
 		p.Base = cfg.GitHub.DefaultBranch
 	}
 	return nil
 }
 
-func (e *Env) parseConfig(ctx context.Context, p *Project) (*config.Project, []string, error) {
+func (e *Env) parseConfig(ctx context.Context, p *Project) (*config.Project, error) {
 	data, err := p.Repo.Show(ctx, p.Commit, config.ProjectFile)
 	if errors.Is(err, gitx.ErrNotFound) {
-		return nil, nil, fmt.Errorf("%s is missing on %s", config.ProjectFile, p.Base)
+		return nil, fmt.Errorf("%s is missing on %s", config.ProjectFile, p.Base)
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	cfg, warns, err := config.ParseProject(data, p.Commit)
+	cfg, err := config.ParseProject(data, p.Commit)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if cfg.Name != p.Name {
-		return nil, nil, fmt.Errorf("%s says name %q but the project is registered as %q", config.ProjectFile, cfg.Name, p.Name)
+		return nil, fmt.Errorf("%s says name %q but the project is registered as %q", config.ProjectFile, cfg.Name, p.Name)
 	}
-	return cfg, warns, nil
+	return cfg, nil
 }
 
 // Linear is a project's Linear access with its team and states resolved.
