@@ -1,6 +1,6 @@
 # Gosha — Design
 
-> Status: **agreed plan**, implemented up to M1 (skeleton). Implementation order: [ROADMAP.md](ROADMAP.md). Assumptions checked in M0: [SPIKES.md](SPIKES.md).
+> Status: **agreed plan**, implemented up to M2 (ticket → PR). Implementation order: [ROADMAP.md](ROADMAP.md). Assumptions checked in M0: [SPIKES.md](SPIKES.md).
 
 ## 1. Overview
 
@@ -121,7 +121,7 @@ internal/linear/      GraphQL client + app OAuth: poll, transition, comment, att
 internal/notion/      API client, block → markdown, incremental page-tree mirror (§6)
 internal/github/      GitHub REST API via go-github + ghinstallation: App auth, PRs, reviews, comments, check runs, workflow runs, merge
 internal/notify/      event types, Telegram sender, rate limiting, retries
-internal/gitx/        clone, fetch, worktree, merge, push (shells out to the git CLI; token injected per command)
+internal/gitx/        bare clone, fetch, ticket checkouts, merge, push (shells out to the git CLI; token injected per command, hooks off)
 internal/agent/       claude CLI runner, prompt rendering, result parsing
 internal/tmpl/        template data model + functions shared by prompts and the branch pattern (§5.3)
 internal/pipeline/    per-ticket state machine, limits, recovery
@@ -131,7 +131,7 @@ internal/daemon/      supervisors, scheduler, graceful shutdown
 
 **Tooling choices:**
 - **No `gh` CLI.** GitHub is accessed through its API from Go (`google/go-github`, with `bradleyfalzon/ghinstallation` for GitHub App tokens). That gives typed responses, automatic token refresh, conditional requests to save rate limit, and no command output to parse.
-- **The `git` CLI rather than go-git.** It has full worktree, merge and conflict support. The App token is passed in for each command and never stored.
+- **The `git` CLI rather than go-git.** It has full merge and conflict support. The App token is passed in for each command and never stored.
 - **Host dependencies stay at two:** `git` and `claude`. On Linux, Claude Code's sandbox also needs `bubblewrap` and `socat` (not yet verified, see [SPIKES.md](SPIKES.md#open-items)); `gosha doctor` checks for them.
 
 ## 5. Configuration
@@ -172,7 +172,7 @@ Secrets are referenced with `${VAR}` (§5.4).
 
 ### 5.2 Per project: `<repo>/.gosha/config.yaml`
 
-**Read from the default branch, never from a worktree.** There's no local copy. On every poll, Gosha runs `git fetch origin` in the project's bare clone, then reads the file with `git show origin/<default>:.gosha/config.yaml`; prompt templates are read the same way. (A bare clone has no `origin/*` refs by default, so `gosha add` sets `remote.origin.fetch` to `+refs/heads/*:refs/remotes/origin/*`.) Agents therefore can't change their own rules, and a config change takes effect on the next poll after it reaches the default branch, with no restart.
+**Read from the default branch, never from a checkout.** There's no local copy. On every poll, Gosha runs `git fetch origin` in the project's bare clone, then reads the file with `git show origin/<default>:.gosha/config.yaml`; prompt templates are read the same way. (A bare clone has no `origin/*` refs by default, so `gosha add` sets `remote.origin.fetch` to `+refs/heads/*:refs/remotes/origin/*`.) Agents therefore can't change their own rules, and a config change takes effect on the next poll after it reaches the default branch, with no restart.
 
 **Invalid or missing config: fail closed.** Gosha never keeps running a project on an outdated config.
 - **Invalid config** (bad YAML, failed validation, a missing secret variable): the project goes **paused**. No new tickets are picked up. A ticket already in flight stops at the next step boundary and stays In Progress, so it can resume.
@@ -220,7 +220,7 @@ deploy:                        # optional
 agent:
   timeout: 60m                 # total agent working time per pickup
   model: ""                    # optional override
-  setup: ["make deps"]         # optional commands run in a fresh worktree
+  setup: ["make deps"]         # optional commands run in a fresh checkout (outside the sandbox, §12)
   permission_mode: dontask     # dontask (default) | auto | bypass; see §7.1
 ```
 
@@ -358,15 +358,15 @@ context/
 
 Both roles run the `claude` CLI in headless mode on the **Claude subscription**. Authentication uses a long-lived subscription token from `claude setup-token`, passed as `CLAUDE_CODE_OAUTH_TOKEN`. This doesn't depend on an interactive login or an OS keychain, so it works the same under any service manager and any OS user. Gosha removes `ANTHROPIC_API_KEY` from the agent's environment so nothing is ever billed to the API. (`--bare` can't be used: it ignores OAuth tokens.)
 
-Every run uses `--output-format stream-json --verbose`; the stream is saved as the run's transcript and read for the session id, the result and usage-limit events (§8.11).
+Every run uses `--output-format stream-json --verbose`; the stream is saved (redacted) as the run's transcript and read for the session id, the result and usage-limit events (§8.11). The prompt goes in on stdin, never in argv, because ticket text is unbounded and argv is visible to every user in `ps`. Each project has its own Claude settings directory, `projects/<project>/claude/` (§11.3): sessions persist there so `--resume` works across passes, and one project's sessions never show up in another's runs.
 
 | | Implementer | Reviewer |
 |---|---|---|
-| Working dir | ticket worktree (read/write) | ticket worktree (read-only use) |
+| Working dir | ticket checkout (read/write) | ticket checkout (read-only use) |
 | Context | ticket + human comments + project context + feedback | ticket + project context + diff vs base |
 | Session | resumes its own session across address passes when possible | **always fresh** |
 | Tools | all tools (edit, write, shell, local git) | edit/write tools removed; read, search, shell for running tests |
-| Output | commits in the worktree + result JSON | result JSON |
+| Output | commits in the checkout + result JSON | result JSON |
 
 **Agents never get GitHub or Linear credentials,** neither in their environment nor on disk they can reach (§7.1). The implementer commits locally, and **Gosha** pushes, opens PRs, posts comments and merges.
 
@@ -377,16 +377,20 @@ Two layers do this, and both are needed (M0 showed the OS sandbox alone isn't en
 - the **OS sandbox** confines Bash and every process it starts;
 - **permission rules** confine Claude's own file tools (Read, Write, Edit), which run outside the OS sandbox.
 
-Gosha generates both per run into a settings file passed with `--settings`.
+Gosha generates both per run into a settings file passed with `--settings`. The settings file lives next to the transcript, outside anything the agent can write.
+
+The two layers need different shapes, because they resolve conflicts differently (checked on macOS, see [SPIKES.md](SPIKES.md#1i-sandbox-paths-inside-gosha-m2)):
+- **OS sandbox:** `denyRead` covers all of `~/.gosha`, and `allowRead`/`allowWrite` re-allow the run's checkout and temp directory inside it. A more specific allow wins here.
+- **Permission rules:** a deny always beats an allow, so `Read(~/.gosha/**)` would also hide the checkout from the Read tool. Gosha instead denies every entry of `~/.gosha` *around* the run's paths (other projects, `secrets.env`, the database, the bare clone, other tickets' checkouts, transcripts…). These entries are listed when the run starts, with no globs.
 
 - **Permission mode** (`agent.permission_mode`):
-  - `dontask` (default): `--permission-mode dontAsk --permission-prompts none`. Only what the generated allow rules list is permitted; everything else is denied without a prompt. Fully unattended. The allow rules are: `Read`, `Bash` (confined by the sandbox), web fetch/search, and `Edit` inside the worktree and the run's temp directory only.
+  - `dontask` (default): `--permission-mode dontAsk --permission-prompts none`. Only what the generated allow rules list is permitted; everything else is denied without a prompt. Fully unattended. The allow rules are: `Read`, `Bash` (confined by the sandbox), web fetch/search, and `Edit` inside the checkout and the run's temp directory only.
   - `auto`: `--permission-mode auto --permission-prompts none`. Claude's classifier approves or blocks each action. Works headless; in M0 it blocked no legitimate step.
   - `bypass`: `--dangerously-skip-permissions`. Everything not explicitly denied is allowed, so the Write and Edit tools can write anywhere the service user can. Explicit opt-in only; `gosha doctor` warns about it.
-- **Deny rules** apply in every mode: no `Read` or `Edit` under `~/.gosha`, no `Edit` in the context copy.
+- **Deny rules** apply in every mode: no `Read` or `Edit` anywhere in `~/.gosha` except the run's checkout and temp directory, and no `Edit` in the context copy.
 - **Reviewer:** its edit and write tools are *removed* (`--disallowedTools`), which holds in any mode, so it can read and run tests but not change code.
 - **Sandbox:** Gosha enables **Claude Code's built-in sandbox** (OS-level: Seatbelt on macOS, bubblewrap on Linux) for every agent run, with `failIfUnavailable: true` and `allowUnsandboxedCommands: false` (the agent can't ask to run a command outside it):
-  - **Writable:** the ticket's worktree, the run's temp directory, and toolchain caches. The default cache list depends on the OS (e.g. `~/.cache`, `~/go`, `~/.npm`, and `~/Library/Caches` on macOS), plus `agent.writable` from the global config. The sandbox can't create the missing parent of an allowed directory, so Gosha creates every writable directory before the run.
+  - **Writable:** the ticket's checkout, the run's temp directory, and toolchain caches. The default cache list depends on the OS (e.g. `~/.cache`, `~/go`, `~/.npm`, and `~/Library/Caches` on macOS), plus `agent.writable` from the global config. The sandbox can't create the missing parent of an allowed directory, so Gosha creates every writable directory before the run.
   - **Read-only:** the run's frozen context copy.
   - **No access:** `~/.gosha`, i.e. secrets, the GitHub App key, other projects and the database.
   - **Network:** allowed (dependency installs need it).
@@ -446,11 +450,16 @@ All of them go through the same **address** step (`address.md`, data in `.Feedba
 
 ### 8.2 Implement
 1. Refresh the project context and freeze a copy for the run (§6.2).
-2. Fetch, create the worktree from `origin/<base>`, and run `agent.setup`.
+2. Fetch, then create the ticket checkout `worktrees/<ticket>/` from `origin/<base>` and run `agent.setup` in it (outside the sandbox, with the agent's scrubbed environment; see §12).
+   - **The checkout is a self-contained local clone, not a linked `git worktree`.** The agent can write to everything in it, including `.git/`. A linked worktree would share the bare clone's refs, hooks and config, including `origin/<default>` (where config is read from) and the hooks Gosha's own push would run with the token in its environment.
+   - **Gosha never runs git inside the checkout once an agent has used it.** It collects the work with `git fetch <checkout>` *from the bare clone*, which runs only upload-pack in the checkout, and then counts commits, measures the diff and pushes from the bare clone. Every Gosha git command also runs with hooks disabled.
+   - A new run always starts from a fresh checkout. Later passes of the same run (resume) reuse it, and a lost checkout is rebuilt from the work Gosha already collected.
 3. Run the implementer with `implement.md`.
 4. If the result is `blocked`, go to **Blocked**.
 5. If there are no commits, go to Blocked ("no changes produced").
-6. Push and open the PR as the GitHub App: title `NXT-12: <title>`, body = summary + ticket link. Add the PR as a Linear attachment.
+6. Push and open the PR as the GitHub App: title `NXT-12: <title>`, body = summary + verification + assumptions + ticket link. Add the PR as a Linear attachment.
+
+**Comment cursor:** the ticket's comment cursor moves past the new human comments only once the implementer has actually been given them, so an interrupted pass (usage limit, shutdown) doesn't lose instructions.
 
 **Branch naming.** `github.branch` is a template using the shared data model (§5.3):
 - **Default:** `gosha/{{.Ticket.ID}}-{{.Ticket.Title | slug}}` → `gosha/NXT-12-add-login`.
@@ -479,7 +488,7 @@ For the PR's **head SHA**:
 ### 8.5 Merge
 1. If the base has moved, merge the base into the branch. On conflicts, the implementer resolves them (this counts as a check round). Push, then go back to checks.
 2. Squash-merge through the API **with `sha` = the head commit that was checked**. If anything was pushed after the checks ran, the merge is refused and Gosha goes back to checks.
-3. Delete the branch and remove the worktree.
+3. Delete the branch and remove the checkout.
 
 ### 8.6 Identities
 
@@ -513,7 +522,7 @@ Find the `deploy.workflow` run for the merge commit on the base branch and wait 
 Post the **Delivered** comment, move the ticket to In Review, and notify Telegram. The run is complete.
 
 ### 8.9 Blocked
-Post the **Blocked** comment, move the ticket to Blocked, and notify Telegram. Keep the branch, PR and worktree for resume.
+Post the **Blocked** comment, move the ticket to Blocked, and notify Telegram. Keep the branch, PR and checkout for resume; the run stays open (step `blocked`), so moving the ticket back to Ready resumes it. Unexpected failures after the claim (an agent crash, an invalid result after the retry, a git or API error) also go Blocked, with the error in the comment. A usage limit or a shutdown doesn't: the ticket stays In Progress and the run continues on the next pass (§8.11, §10).
 
 ### 8.10 Cancel / pause
 While a ticket is active, the poller re-reads its state every 30s.
@@ -594,9 +603,14 @@ Everything lives in **one directory**, `~/.gosha` of the running user. `--home` 
     └── <project>/
         ├── secrets.env                      # optional overrides, chmod 600
         ├── repo/                            # bare clone (presence = project registered)
-        ├── worktrees/<ticket>/              # one per active ticket
+        ├── worktrees/<ticket>/              # ticket checkout (a local clone), one per active ticket
+        ├── claude/                          # CLAUDE_CONFIG_DIR for this project's agents (sessions)
         ├── context/                         # Notion mirror (INDEX.md + page tree)
-        └── runs/<ticket>/<n>-<role>.jsonl   # full agent transcripts
+        └── runs/<ticket>/
+            ├── <n>/                         # pass n: the agent's TMPDIR and result file
+            ├── <n>-<role>.jsonl             # full agent transcript (redacted)
+            ├── <n>-settings.json            # generated agent settings
+            └── <n>-setup.log                # agent.setup output
 ```
 
 The project's config is **not** in this tree; it's read from the repo (§5.2). `gosha config show <project>` prints the effective config (repo file + defaults, secrets shown as `***`).
@@ -665,13 +679,15 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 
 - Ticket and Notion text are **untrusted input** to an agent that can run commands. Mitigations:
   - the agent has no credentials in its environment, and the sandbox blocks `~/.gosha` (§7.1)
-  - OS-level sandbox: writes limited to the worktree, temp and toolchain caches
+  - OS-level sandbox: writes limited to the checkout, temp and toolchain caches
   - never root
   - Gosha does all pushing and merging
   - `.gosha/` is read from the default branch
   - the GitHub App has no Workflows permission
   - the reviewer flags any PR that touches `.gosha/` unless the ticket explicitly asks for it
   - agents use Gosha's own Claude settings directory, not the user's personal one
+  - ticket checkouts are separate clones, and Gosha never runs git inside one after an agent has used it (§8.2)
+- **Known risk: `agent.setup` runs outside the sandbox.** It runs in a fresh checkout of the default branch with the agent's scrubbed environment (no secrets in it), but it can read files under `~/.gosha`. The commands come from the default branch's config, but the code they run (a `Makefile`, `package.json` scripts) can include agent-written code once Gosha merges its own PRs (M4). Mitigations: review, CI, and a separate OS user (§11.2). Keep `agent.setup` minimal, or leave dependency installs to the agent, which runs them sandboxed.
 - **Service user** (§11.2): Gosha runs as an existing regular user and refuses root. For extra isolation, the operator can create a separate regular account and install with `--user`.
 - Credentials:
   - GitHub: App private key
@@ -685,7 +701,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - One GitHub identity: the Gosha GitHub App (no PRs as the human). Reviews are `COMMENT` reviews with a verdict.
 - A blocker is satisfied once it's In Review (its code is merged) or Done.
 - Linear states: Ready / In Progress / In Review / Blocked, with default names that can be overridden. Done and Canceled are recognised by state type. Only humans move tickets to Done. Backlog/Todo pause, Canceled abandons.
-- Agents run unattended in `dontask` mode by default (`auto` optional, `bypass` opt-in with a warning): an allowlist confines file tools to the worktree and temp directory, and Claude Code's OS-level sandbox confines Bash and blocks `~/.gosha`. Without a sandbox, Gosha refuses to run agents unless explicitly opted out. (Changed after M0: bypass let file tools write outside the sandbox.)
+- Agents run unattended in `dontask` mode by default (`auto` optional, `bypass` opt-in with a warning): an allowlist confines file tools to the checkout and temp directory, and Claude Code's OS-level sandbox confines Bash and blocks `~/.gosha`. Without a sandbox, Gosha refuses to run agents unless explicitly opted out. (Changed after M0: bypass let file tools write outside the sandbox.)
 - Linear identity: an OAuth app using the `client_credentials` grant; no personal key, no browser flow. (Changed after M0.)
 - Feedback model: review, human PR comments, CI failures and conflicts all go through the address step, limited by `review.max_rounds` and `checks.max_rounds`.
 - Notion mirror: page tree → file tree (`README.md` for pages with children, `INDEX.md` map). Databases aren't mirrored for now.
@@ -699,3 +715,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - Project config is read from `origin/<default>` in a bare clone, with no local copy. An invalid or missing config pauses the project (fail closed).
 - Telegram is the detailed activity feed, posted to a private channel. Linear only gets the PR attachment plus the Blocked and Delivered comments.
 - Daily digest at 09:00 (configurable, can be disabled). It also serves as the sign that Gosha is still running.
+- Ticket checkouts are self-contained local clones, never linked worktrees, and Gosha never runs git inside one after an agent has used it: the work is collected by fetching from the bare clone. (M2)
+- Sandbox layout: the OS sandbox denies `~/.gosha` and re-allows the run's paths; permission rules deny everything around the run's paths, because a permission deny beats any allow. (M2)
+- `agent.setup` is run by Gosha outside the sandbox, as a deliberate, documented risk (§12). (M2)
+- Per-project Claude config dir (`projects/<project>/claude/`); prompts go to claude on stdin. (M2)

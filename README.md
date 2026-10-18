@@ -53,6 +53,8 @@ gosha auth linear                # confirm the Linear app identity
 gosha add <github-repo-url>      # register a project (needs .gosha/config.yaml on its default branch)
 gosha validate                   # config, credentials, Linear states
 gosha run <project> --dry-run    # what Gosha would pick up, reported here and in Telegram
+gosha run <project> --once       # take one Ready ticket to an open PR
+gosha run <project>              # keep doing that, in the foreground
 ```
 
 The global config lives in `~/.gosha/config.yaml` ([§5.1](docs/DESIGN.md#51-global-goshaconfigyaml)), and each project's config in `<repo>/.gosha/config.yaml` ([§5.2](docs/DESIGN.md#52-per-project-repogoshaconfigyaml)).

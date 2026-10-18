@@ -96,7 +96,7 @@ Every run emits a `rate_limit_event`:
       "seven_day": { "utilization": 0.01, "resetsAt": 1792692000 } } } }
 ```
 
-The `result` event also has `is_error`, `api_error_status` and `permission_denials`. Gosha can read the reset time from JSON instead of parsing text, and can see utilization before a limit is hit. **Not yet observed:** the exact `status` value and result event when a limit is actually reached (no quota was burned to force one). The parser should treat any `status` other than `allowed` as limited.
+The `result` event also has `is_error`, `api_error_status` and `permission_denials`. Gosha can read the reset time from JSON instead of parsing text, and can see utilization before a limit is hit. **Not yet observed:** the exact `status` value and result event when a limit is actually reached (no quota was burned to force one). The parser should treat any `status` other than `allowed` as limited. (M2: `allowed_warning`, which Claude Code reports when close to a limit while still serving requests, is treated as allowed too.)
 
 ### 1f. `auto` mode: yes
 `--permission-mode auto --permission-prompts none` runs headless. Over 3 runs × 6 legitimate steps (`ls`, `go build`, codegen + `go vet`, `git status`, `curl`, cache write), the classifier blocked nothing.
@@ -106,6 +106,18 @@ Needs a Linux host (see Open items).
 
 ### 1h. Process control: yes
 Starting claude with `Setpgid` and sending SIGTERM (then SIGKILL after 5s) to the negative pgid stopped claude and the `sleep` it had started. No processes were left behind.
+
+### 1i. Sandbox paths inside ~/.gosha (M2)
+Checked during M2 on macOS (`claude` 2.1.302), because ticket checkouts and run temp dirs live under `~/.gosha`, which the sandbox must otherwise hide.
+
+| Layer | Setup | Result |
+|---|---|---|
+| OS sandbox | `denyRead: [X]`, `allowWrite: [X/w/t]` | ❌ Bash can write `X/w/t` but **not read** it |
+| OS sandbox | `denyRead: [X]`, `allowRead` + `allowWrite: [X/w/t]` | ✅ `X/w/t` readable and writable; `X/secret`, `X/w/other` still blocked |
+| Permission rules | allow `Read`, `Edit(X/w/t/**)`; deny `Read(X/**)`, `Edit(X/**)` | ❌ Read and Write tools denied **inside** `X/w/t` too: a deny always beats an allow |
+| Permission rules | deny every entry of `X` *around* `X/w/t` (`X/secret`, `X/w/other`, …) | ✅ `X/w/t` readable and writable with the file tools; the rest denied |
+
+So the two layers take different shapes (DESIGN §7.1): the sandbox denies `~/.gosha` and re-allows the run's paths, and the permission rules deny the siblings along the path. `TestRealClaude` in `internal/agent` repeats this check with Gosha's generated settings (`GOSHA_TEST_CLAUDE=1`), and passed on macOS with the user's own login (`GOSHA_TEST_CLAUDE=user`). **Not yet run with an isolated `CLAUDE_CONFIG_DIR` inside `~/.gosha` and a setup token,** which is the production layout.
 
 ## 2. Linear app actor: yes
 
@@ -149,3 +161,4 @@ Findings:
 
 - **Linux runner (best effort, unverified):** sandbox on bubblewrap, required packages (Claude Code's docs list `bubblewrap` and `socat`), root refusal (1g). To be checked before M7 on a real Linux host.
 - **Usage-limit payload at an actual limit:** capture the first real occurrence and adjust the parser.
+- **Production agent layout:** run `TestRealClaude` with a setup token (`GOSHA_TEST_CLAUDE=1`), so the isolated `CLAUDE_CONFIG_DIR` under `~/.gosha` is exercised (shell snapshots and session files live there, outside what Bash may read).
