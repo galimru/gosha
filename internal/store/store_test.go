@@ -100,3 +100,27 @@ func TestProjectStateTransitions(t *testing.T) {
 		t.Errorf("not deleted: %+v", st)
 	}
 }
+
+func TestUpdateRunAndBranches(t *testing.T) {
+	ctx := context.Background()
+	s, _ := open(t)
+	r := &Run{Project: "p", TicketID: "NXT-1", Mode: "fresh", Branch: "gosha/NXT-1-x", BaseBranch: "main"}
+	if err := s.CreateRun(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	r.Step, r.PRNumber, r.PRURL, r.ImplSession, r.AgentRuns, r.BlockedReason = "review", 5, "https://x/5", "sess", 2, "why"
+	if err := s.UpdateRun(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.OpenRun(ctx, "p", "NXT-1")
+	if err != nil || got.Step != "review" || got.PRNumber != 5 || got.PRURL != "https://x/5" || got.ImplSession != "sess" ||
+		got.AgentRuns != 2 || got.BlockedReason != "why" || got.BaseBranch != "main" {
+		t.Fatalf("after update: %+v, %v", got, err)
+	}
+	s.CreateRun(ctx, &Run{Project: "p", TicketID: "NXT-2", Mode: "fresh", Branch: "gosha/NXT-2-y"})
+	s.CreateRun(ctx, &Run{Project: "q", TicketID: "NXT-3", Mode: "fresh", Branch: "other"})
+	bs, err := s.Branches(ctx, "p")
+	if err != nil || len(bs) != 2 {
+		t.Errorf("Branches = %v, %v", bs, err)
+	}
+}
