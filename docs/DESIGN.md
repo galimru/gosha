@@ -116,7 +116,7 @@ Why one daemon rather than one per project: Claude subscription limits and the h
 ### Packages
 
 ```
-cmd/gosha/            CLI entrypoint (all commands in §11.5)
+cmd/gosha/            CLI entrypoint (all commands in §11.6)
 internal/config/      global + project config loading and validation
 internal/linear/      GraphQL client + app OAuth: poll, transition, comment, attachment, relations
 internal/notion/      API client, block → markdown, incremental page-tree mirror (§6)
@@ -159,6 +159,7 @@ telegram:
   digest_at: "09:00"           # daily digest, local time; empty disables it
 
 heartbeat_url: ""              # optional; GET after every poll, for an outside monitor (§9)
+retention: 30d                 # how long finished runs' transcripts and idle Blocked workspaces are kept (§11.3)
 ```
 
 **Project discovery:** the projects Gosha manages are the directories under `~/.gosha/projects/` that contain a `repo/` clone. There's no separate list to keep in sync.
@@ -541,10 +542,12 @@ SQLite at `~/.gosha/gosha.db` stores runs (project, ticket, mode, PR, branch, cu
 
 On startup, for each ticket that is In Progress in Linear **and** has an open run in the db, Gosha re-enters the pipeline at its current step. Steps are idempotent, so they reconcile with the real state of the PR and checks. A ticket that is In Progress with no run record is left untouched (a human moved it there).
 
+**Schema migrations** are numbered SQL files built into the binary, applied in order at startup. Once released, a migration is never edited, only followed by a new one, so every `gosha upgrade` (§11.4) keeps the existing `~/.gosha` working. Before applying any, Gosha copies `gosha.db` to `gosha.db.bak-<old version>`. A database newer than the binary (after a downgrade) is refused with a message naming the release it needs.
+
 ## 11. Host & operations
 
 ### 11.1 Supported hosts
-- **macOS and Linux**, on amd64 and arm64. Gosha is a single static Go binary. Linux is best effort until the agent sandbox is verified there ([SPIKES.md](SPIKES.md#open-items)).
+- **macOS and Linux**, on amd64 and arm64. Gosha is a single static Go binary, installed from GitHub releases (§11.4). Linux is best effort until the agent sandbox is verified there ([SPIKES.md](SPIKES.md#open-items)).
 - **External tools it needs:** `git` and the `claude` CLI on `PATH` (on Linux also `bubblewrap` and `socat` for the agent sandbox). Gosha checks them at startup (`gosha doctor`).
 - **Windows:** not a target. WSL works as Linux.
 - **Host decisions belong to the operator:** keeping the machine awake, restarting after a power failure, disk encryption, remote access. Gosha doesn't touch them. If Gosha has been restarted, it resumes runs (§10).
@@ -588,11 +591,24 @@ Everything lives in **one directory**, `~/.gosha` of the running user. `--home` 
     └── tmp/<n>/                             # pass n: the agent's TMPDIR and result file
 ```
 
-A ticket's workspace is removed once its PR is merged, and `gosha remove` removes a project's workspaces with it. A host move can skip `workspaces/`.
+**Cleanup:**
+- A ticket's workspace is removed when its run ends: merged, canceled, or replaced by a restart after its PR was closed unmerged. A Blocked run keeps its workspace for `retention` (§5.1), then loses it; a resume rebuilds it (§8.2).
+- A finished run's `runs/<ticket>/` files (transcripts, settings, checks) are removed `retention` after the run ended. The run's row in `gosha.db` stays.
+- `gosha remove` removes a project's workspaces with it. A host move can skip `workspaces/`.
+- `gosha doctor` reports how much space `workspaces/` and `projects/*/runs/` take.
+- The daemon applies these rules on its own. `gosha prune` applies them on demand (e.g. without a running daemon, or to free space now). It never touches an active run's workspace, takes the same locks as the daemon's cleanup, and never deletes run records from `gosha.db`.
 
 The project's config is **not** in this tree; it's read from the repo (§5.2). `gosha config show <project>` prints the effective config (repo file + defaults).
 
-### 11.4 Service
+### 11.4 Install & upgrade
+- **Releases:** every merge to `main` with a `feat`, `fix` or `perf` commit since the last tag publishes a GitHub release. GoReleaser builds archives for macOS and Linux on amd64 and arm64, plus `checksums.txt`. Versions stay `0.x`: `feat` and breaking changes bump the minor, everything else the patch. `gosha --version` reports it.
+- **Install:** `curl -fsSL https://raw.githubusercontent.com/galimru/gosha/main/install.sh | sh`. The script detects the OS and architecture, downloads the latest release, verifies it against `checksums.txt`, and installs `gosha` into `~/.local/bin` (`/usr/local/bin` when run as root). `--prefix <dir>` picks another directory and `--version v0.x.y` pins a release. It needs only `sh`, `curl` or `wget`, `tar`, and `sha256sum` or `shasum`. Installing the binary as root is fine; running Gosha as root isn't (§11.2).
+- **With a Go toolchain,** `go install github.com/galimru/gosha/cmd/gosha@latest` also works.
+- **Upgrade:** `gosha upgrade` downloads the latest release for the running OS and architecture, verifies its checksum, and replaces its own binary atomically (written next to it, then renamed over it). If the service is installed, it then restarts it, which needs root like `service restart`; in-flight runs resume (§10). Without root, it still replaces the binary and prints the restart command.
+  - `--check` only reports whether a newer release exists. `--version v0.x.y` installs a specific release, including an older one.
+  - A binary in a directory the user can't write fails with a hint to use `sudo`. A `dev` build (from source) refuses to upgrade itself.
+
+### 11.5 Service
 - `gosha daemon` runs in the foreground and logs to a file and stderr. Any service manager can run it.
 - `sudo gosha service install` / `sudo gosha service uninstall` register Gosha with the host's service manager. Both need root.
 
@@ -611,7 +627,8 @@ The project's config is **not** in this tree; it's read from the repo (§5.2). `
   - `--print` (show the unit file without installing it)
 - **Environment:** the unit sets an explicit `PATH`, taken from the target user's login shell at install time, plus `HOME`. That way the agent's tools are found.
 - **Before writing anything,** `install` checks that the user exists and isn't root, the binary is executable, `gosha doctor` passes for that user, and the global config is valid.
-- **Re-running `install`** is safe: it replaces the unit and restarts the service, which is also how an upgrade is applied.
+- **Re-running `install`** is safe: it replaces the unit and restarts the service. Upgrades go through `gosha upgrade` (§11.4).
+- **The unit runs the binary by the absolute path it had at install time.** Moving the binary means running `install` again.
 - **`uninstall`** stops and removes only the service. Config, secrets and state (§11.3) are left untouched.
 - **Day-to-day control:** thin wrappers, so the same commands work on both OSes:
 
@@ -630,9 +647,9 @@ The project's config is **not** in this tree; it's read from the repo (§5.2). `
 - **SIGTERM** finishes in-flight API calls, kills agents, and leaves runs resumable.
 - A container image is a possible later option, not part of the current plan.
 
-**Moving to another host:** all state lives in `~/.gosha` (§11.3). Stop the service, copy that directory to the new host (`git` and `claude` must already be available there), install the service, and start it. Runs that were in flight resume (§10). Nothing is tied to the original machine: no keychain, no hostnames, no absolute paths outside the user's home.
+**Moving to another host:** all state lives in `~/.gosha` (§11.3). Stop the service, copy that directory to the new host (`git` and `claude` must already be available there), install Gosha (§11.4) and the service, and start it. Runs that were in flight resume (§10). Nothing is tied to the original machine: no keychain, no hostnames, no absolute paths outside the user's home.
 
-### 11.5 CLI
+### 11.6 CLI
 Commands act on the `~/.gosha` of the user running them, normally the same user the service runs as.
 
 - `gosha init`: run in a local checkout; writes a starter `.gosha/config.yaml` to commit
@@ -648,6 +665,8 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - `gosha run <project> [--once] [--ticket NXT-12] [--dry-run]`: foreground loop for one project, for development and prompt tuning. `--once` handles a single ticket. `--dry-run` does a single pickup pass and prints what would happen (pickup, queue, skipped tickets and why, mode, branch), without changing anything in Linear or GitHub or posting to Telegram.
 - `gosha secrets edit`: opens `secrets.env` in `$EDITOR`
 - `gosha service install|uninstall|start|stop|restart|status`
+- `gosha prune [project] [--dry-run] [--older-than 7d]`: apply the cleanup rules now (§11.3). `--dry-run` lists what would be removed and how much space it frees; `--older-than` overrides `retention` for this run.
+- `gosha upgrade [--check] [--version v0.x.y]`: replace the binary with a release and restart the service (§11.4)
 - `gosha daemon`
 
 ## 12. Security

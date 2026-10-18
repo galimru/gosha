@@ -13,6 +13,7 @@ Implementation order for the design in [DESIGN.md](DESIGN.md). The riskiest assu
 | 6 | Deliver | Full ticket lifecycle |
 | 7 | Feedback | Simpler design from the M0–M6 feedback |
 | 8 | Production | Runs unattended as a service |
+| 9 | End-to-end | Every workflow verified on real GitHub, Linear and Notion |
 
 ## M0 — Spikes
 
@@ -168,8 +169,32 @@ Changes from the plan:
 - Log rotation, daily digest
 - Verify the agent sandbox on Linux (bubblewrap, required packages, root refusal); see SPIKES.md open items
 - Remaining CLI: `init`, `config show`, `logs`
+- Releases (DESIGN §11.4): GoReleaser builds macOS and Linux binaries (amd64, arm64) with `main.version` set, and a workflow publishes a GitHub release on every merge to `main` that has a `feat`, `fix` or `perf` commit since the last tag. Versions stay `0.x`: `feat` and breaking changes bump the minor, everything else the patch
+- Install and upgrade (DESIGN §11.4): `install.sh` (download, checksum, install to `~/.local/bin`), `gosha upgrade` (replace the binary, restart the service), README getting started switched to `install.sh`
+- Stable schema before the first release (DESIGN §10): squash `001`–`005` into one baseline migration; afterwards migrations are append-only, `gosha.db` is backed up before applying one, and a database newer than the binary is refused
+- Retention (DESIGN §11.3): workspaces removed when a run ends any way (not only on merge), idle Blocked workspaces and finished runs' transcripts removed after `retention`, disk use in `gosha doctor`, and `gosha prune [--dry-run] [--older-than]` to run the same cleanup on demand
+- Docs cleanup:
+  - README reorganized into a clear structure (what Gosha is, requirements, install, setup, usage, links to the design)
+  - DESIGN cleaned up: current behaviour only, with milestone notes and superseded decisions removed or moved to the decisions log
+  - Code comments stop referencing DESIGN (no `DESIGN §x` pointers); comments explain the code on their own
 
 **Done when:** Gosha runs as a service on a VPS for a week across two projects without intervention beyond Linear.
+
+## M9 — End-to-end
+
+Every milestone so far was built against unit tests and fakes, and M1–M7 are each pending their end-to-end check. M9 runs all of them, and everything else in DESIGN §2, on real services. Results and anything that had to change go in [E2E.md](E2E.md), the same way spikes went in SPIKES.md. A failure is fixed (and DESIGN.md updated if behaviour changes) before M9 is done.
+
+- **Test setup,** kept for later regressions:
+  - a GitHub repo with a small app, a CI workflow and a deploy workflow, with the Gosha GitHub App installed
+  - a Linear team with Gosha's states, a Notion root page with a few spec pages, a Telegram channel
+  - Gosha installed from a release with `install.sh` and running as a service, on macOS and on a Linux VPS
+- **Lifecycle** (DESIGN §2): Ready → delivered and In Review; In Review → comment → Ready opens a follow-up PR; Blocked → answer → Ready resumes on the same PR; PR closed → Ready restarts; Backlog/Todo pauses and Ready resumes; Canceled closes the PR and deletes the branch
+- **Pipeline:** priority and blocked-by ordering, a review → fix round, a failing check → fix round, a moved base (with and without a conflict), a push touching `.github/workflows/` going Blocked, a failed deploy reported on the ticket
+- **Context:** an agent reads the Notion pages relevant to its ticket; edits, renames and moves between pickups show up in the mirror; removing Notion access pauses the project
+- **Recovery:** the daemon killed during implement, review and checks resumes each run; a usage limit pauses and resumes (capturing the real payload, SPIKES open items); an invalid config on the default branch pauses the project
+- **Operations:** two projects at once, Telegram alerts, the daily digest and heartbeat, `gosha upgrade` during a run, retention cleanup
+
+**Done when:** every scenario above passes on macOS and Linux, with the results in E2E.md.
 
 ## After M4: build Gosha with Gosha
 

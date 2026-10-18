@@ -1,4 +1,4 @@
-// Command gosha is the Gosha CLI and daemon (DESIGN §11.5).
+// Command gosha is the Gosha CLI and daemon (DESIGN §11.6).
 package main
 
 import (
