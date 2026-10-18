@@ -189,9 +189,19 @@ func (e *Env) ConnectLinear(ctx context.Context, p *Project) (*Linear, error) {
 }
 
 func (e *Env) pause(ctx context.Context, p *Project, cause error) error {
+	return e.setPaused(ctx, p, cause, false)
+}
+
+// pauseNotion pauses the project over Notion access. Only a pickup's
+// context refresh can clear it (DESIGN §6.2).
+func (e *Env) pauseNotion(ctx context.Context, p *Project, cause error) error {
+	return e.setPaused(ctx, p, cause, true)
+}
+
+func (e *Env) setPaused(ctx context.Context, p *Project, cause error, notion bool) error {
 	reason := e.Redactor.Redact(cause.Error())
 	changed, err := e.Store.SetProjectState(ctx, store.ProjectState{
-		Project: p.Name, Status: store.StatusPaused, Reason: reason, Commit: p.Commit,
+		Project: p.Name, Status: store.StatusPaused, Reason: reason, Notion: notion, Commit: p.Commit,
 	})
 	if err != nil {
 		e.Log.Error("record project state", "project", p.Name, "err", err)
@@ -201,6 +211,12 @@ func (e *Env) pause(ctx context.Context, p *Project, cause error) error {
 		e.Notify.Send(notify.Event{Project: p.Name, Text: fmt.Sprintf("paused at %.7s: %s", p.Commit, reason)})
 	}
 	return &PausedError{Project: p.Name, Commit: p.Commit, Err: cause}
+}
+
+// pausedForNotion reports whether the project is paused over Notion access.
+func (e *Env) pausedForNotion(ctx context.Context, p *Project) bool {
+	ps, _ := e.Store.ProjectState(ctx, p.Name)
+	return ps != nil && ps.Status == store.StatusPaused && ps.Notion
 }
 
 // resume marks the project active once its config, Linear and Notion

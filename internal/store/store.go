@@ -315,9 +315,12 @@ const (
 
 // ProjectState is a project's last known health.
 type ProjectState struct {
-	Project   string
-	Status    string
-	Reason    string
+	Project string
+	Status  string
+	Reason  string
+	// Notion is set when the pause is over Notion access, which only a
+	// pickup's context refresh can clear (DESIGN §6.2).
+	Notion    bool
 	Commit    string
 	UpdatedAt time.Time
 }
@@ -329,10 +332,11 @@ func (s *Store) SetProjectState(ctx context.Context, st ProjectState) (changed b
 	if err != nil {
 		return false, err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO project_state (project, status, reason, commit_sha, updated_at)
-		VALUES (?, ?, ?, ?, ?) ON CONFLICT (project) DO UPDATE
-		SET status = excluded.status, reason = excluded.reason, commit_sha = excluded.commit_sha, updated_at = excluded.updated_at`,
-		st.Project, st.Status, st.Reason, st.Commit, now())
+	_, err = s.db.ExecContext(ctx, `INSERT INTO project_state (project, status, reason, notion, commit_sha, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (project) DO UPDATE
+		SET status = excluded.status, reason = excluded.reason, notion = excluded.notion,
+		commit_sha = excluded.commit_sha, updated_at = excluded.updated_at`,
+		st.Project, st.Status, st.Reason, st.Notion, st.Commit, now())
 	if err != nil {
 		return false, err
 	}
@@ -346,8 +350,8 @@ func (s *Store) SetProjectState(ctx context.Context, st ProjectState) (changed b
 func (s *Store) ProjectState(ctx context.Context, project string) (*ProjectState, error) {
 	var st ProjectState
 	var at string
-	err := s.db.QueryRowContext(ctx, `SELECT project, status, reason, commit_sha, updated_at FROM project_state
-		WHERE project = ?`, project).Scan(&st.Project, &st.Status, &st.Reason, &st.Commit, &at)
+	err := s.db.QueryRowContext(ctx, `SELECT project, status, reason, notion, commit_sha, updated_at FROM project_state
+		WHERE project = ?`, project).Scan(&st.Project, &st.Status, &st.Reason, &st.Notion, &st.Commit, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

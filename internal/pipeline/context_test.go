@@ -113,17 +113,11 @@ func TestContextFailures(t *testing.T) {
 	if err := h.env.refreshContext(h.ctx, h.p); err == nil || errors.As(err, &perr) {
 		t.Fatalf("down, no mirror: %v", err)
 	}
-	if !h.env.contextDue(h.ctx, h.p) {
-		t.Error("no mirror: refresh should be due")
-	}
 
 	// Down with a mirror: keep using it.
 	h.env.Notion = func(string) notion.API { return fakeNotion{} }
 	if err := h.env.refreshContext(h.ctx, h.p); err != nil {
 		t.Fatal(err)
-	}
-	if h.env.contextDue(h.ctx, h.p) {
-		t.Error("fresh mirror: refresh shouldn't be due")
 	}
 	h.env.Notion = func(string) notion.API { return fakeNotion{down: true} }
 	if err := h.env.refreshContext(h.ctx, h.p); err != nil {
@@ -135,7 +129,16 @@ func TestContextFailures(t *testing.T) {
 	if err := h.env.refreshContext(h.ctx, h.p); !errors.As(err, &perr) || !errors.Is(err, notion.ErrNoAccess) || state() != store.StatusPaused {
 		t.Fatalf("no access: %v, state %q", err, state())
 	}
-	if !h.env.contextDue(h.ctx, h.p) {
-		t.Error("paused: refresh should be due")
+	if !h.env.pausedForNotion(h.ctx, h.p) {
+		t.Error("not paused for Notion")
+	}
+	// A pickup's refresh that works again lets it resume.
+	h.env.Notion = func(string) notion.API { return fakeNotion{} }
+	if err := h.env.refreshContext(h.ctx, h.p); err != nil {
+		t.Fatal(err)
+	}
+	h.env.resume(h.ctx, h.p)
+	if state() != store.StatusActive || h.env.pausedForNotion(h.ctx, h.p) {
+		t.Errorf("after a working refresh: state %q", state())
 	}
 }

@@ -279,7 +279,6 @@ context/
 │   ├── auth.md
 │   └── data-model.md
 ├── glossary.md
-├── .cache/                     # each page's rendered body, links still as page ids (Gosha's bookkeeping)
 └── .manifest.json              # page id → path, title, child pages, last_edited_time (Gosha's bookkeeping)
 ```
 
@@ -306,16 +305,16 @@ context/
 - **Pages linked from tickets** but outside the tree (a `_linked/` directory) are not mirrored for now; such links keep pointing at Notion.
 
 ### 6.2 Refresh
-- **When:** before every pickup, and every 15 minutes while the project is idle (on every poll while it's paused, so a fixed share is noticed).
+- **When:** only right before a pickup (including a run that continues after an interruption). An idle project's mirror isn't kept fresh, since nothing reads it until the next pickup; `gosha context refresh` refreshes it by hand.
 - **Incremental:** one paginated search lists every page shared with the integration with its `last_edited_time`. A page's content is fetched again only when that changed, when the page is new, or when it was fetched within two minutes of its last edit (Notion rounds `last_edited_time` to the minute, so a later edit in the same minute wouldn't show).
 - **The tree comes from the pages themselves:** a page's child pages are the child page blocks in its content, kept in the manifest in Notion's order. Search only says what changed, so a page search hasn't indexed yet is still mirrored (it's fetched directly).
-- **Renames and moves:** `.manifest.json` maps page id → path. Page bodies are cached in `.cache/` with links to other pages kept as page ids, and resolved to relative paths whenever files are written. When a page is renamed or moved in Notion, its file moves and every link to it is rewritten, without fetching the linking pages again. Pages deleted in Notion are deleted from the mirror; links to them, and to pages outside the tree, point at Notion.
+- **Renames, moves, new and deleted pages:** `.manifest.json` maps page id → path. When the tree changes (a page is added, renamed, moved or deleted), every page is fetched again, so links between pages are resolved from fresh content; that's rarer than content edits, and simpler than tracking links. Pages deleted in Notion are deleted from the mirror; links to them, and to pages outside the tree, point at Notion.
 - **Blocks → markdown:** paragraphs, headings, lists, to-dos, code, quotes, callouts, toggles (expanded), tables, dividers, bookmarks and links, and mentions. Images and files become a link plus a caption. Anything unsupported becomes `<!-- unsupported: type -->`.
 - **Databases aren't mirrored** (for now). A child database appears as `<!-- database "<title>" not mirrored -->` at its position in the parent page. Database support can be added later without changing the tree layout (a database would become a directory, one file per row).
 - **Rate limit:** respects Notion's limit (~3 req/s); rate limits and server errors are retried with backoff.
-- **Consistency:** before each pickup, a refresh runs and a copy of the mirror (without `.cache/` and the manifest) is frozen into the ticket's workspace (`workspaces/<project>/<ticket>/context/`) for that pickup, so its agents see consistent data. A lock (`projects/<project>/context.lock`) keeps a refresh and a freeze, from the daemon or the CLI, from interleaving.
+- **Consistency:** before each pickup, a refresh runs and a copy of the mirror (without the manifest) is frozen into the ticket's workspace (`workspaces/<project>/<ticket>/context/`) for that pickup, so its agents see consistent data. A lock (`projects/<project>/context.lock`) keeps a refresh and a freeze, from the daemon or the CLI, from interleaving.
 - **Failures:**
-  - **No access** (bad token, root page not shared or deleted): a setup problem. The project is **paused**, the same fail-closed way as an invalid config (§5.2), until a refresh succeeds.
+  - **No access** (bad token, root page not shared or deleted): a setup problem. The project is **paused**, the same fail-closed way as an invalid config (§5.2). Only a refresh can clear it, so it's retried at the next pickup: the project stays paused until a Ready ticket's pickup finds Notion readable again.
   - **Anything else** (Notion down, network, rate limits that don't clear): the last mirror is used and a warning is logged. Only if no mirror was ever built does the project wait and retry without picking anything up.
 
 ### 6.3 Access
@@ -711,7 +710,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - A fix for failed checks or conflicts goes back through review (a re-review that only takes a review round if it requests changes), then checks. (M4)
 - The base is merged into the branch by GitHub's update-branch API, so Gosha needs no particular git version (M7; in M4 it used `git merge-tree`, which needs git ≥ 2.38). Conflicts are resolved by the implementer in a fresh checkout and count as a check round. (M4)
 - Merges are pinned to the checked head; a push by anyone else after the checks blocks the ticket instead of being merged. (M4)
-- The Notion mirror is refreshed before every pickup and every 15 minutes when idle. Search detects changes; the tree comes from each page's child page blocks; only changed pages are fetched. Page bodies are cached with links as page ids, so renames and moves rewrite links without re-fetching. (M5)
+- The Notion mirror is refreshed only right before a pickup (M7; M5 also refreshed every 15 minutes when idle). Search detects changes; the tree comes from each page's child page blocks; only changed pages are fetched, unless the tree changed, in which case every page is (M7). (M5)
 - Notion without access to the root page pauses the project; any other Notion failure uses the last mirror. Each pickup gets its own frozen copy in the ticket's workspace. (M5)
 - A project resumes only after the config, Linear and Notion checks all pass, so a pause for one reason isn't cleared by another check passing. (M5)
 - Pages linked from tickets but outside the tree (`_linked/`) are deferred. (M5)

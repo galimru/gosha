@@ -28,7 +28,6 @@ type API interface {
 
 const (
 	manifestFile = ".manifest.json"
-	cacheDir     = ".cache"
 	// IndexFile is the generated map of the tree the agent starts from.
 	IndexFile = "INDEX.md"
 	// slugMax is the length limit of file and directory names.
@@ -151,8 +150,11 @@ func (m *Mirror) Info() (Info, error) {
 
 // Refresh brings the mirror up to date. Search tells which pages changed;
 // the tree itself always comes from the pages' content (their child page
-// blocks), so a page Search doesn't list yet is still found. Only pages
-// that changed are fetched again.
+// blocks), so a page Search doesn't list yet is still found. When only
+// page content changed, only those pages are fetched again. When the tree
+// changed (a page added, renamed, moved or removed), every page is
+// fetched again, so links between pages are resolved from fresh content
+// (DESIGN §6.2).
 func (m *Mirror) Refresh(ctx context.Context) (Stats, error) {
 	unlock, err := m.lock()
 	if err != nil {
@@ -174,29 +176,49 @@ func (m *Mirror) Refresh(ctx context.Context) (Stats, error) {
 	for i := range found {
 		search[normID(found[i].ID)] = &found[i]
 	}
-	w := &walk{m: m, ctx: ctx, old: old, search: search, pages: map[string]*entry{}}
-	if err := os.MkdirAll(filepath.Join(m.Dir, cacheDir), 0o700); err != nil {
+	w, man, err := m.walk(ctx, old, search, false)
+	if err != nil {
 		return Stats{}, err
 	}
-	if err := w.visit(m.Root, true); err != nil {
+	if w.treeChanged && len(old.Pages) > 0 {
+		if w, man, err = m.walk(ctx, old, search, true); err != nil {
+			return Stats{}, err
+		}
+	}
+	if err := m.write(man, w.bodies); err != nil {
 		return Stats{}, err
+	}
+	return w.stats, nil
+}
+
+// walk visits the tree from the root and lays it out. With all set, every
+// page is fetched; otherwise unchanged pages keep their mirrored content.
+func (m *Mirror) walk(ctx context.Context, old *manifest, search map[string]*Page, all bool) (*walk, *manifest, error) {
+	w := &walk{m: m, ctx: ctx, old: old, search: search, all: all, pages: map[string]*entry{}, bodies: map[string]string{}}
+	if err := w.visit(m.Root, true); err != nil {
+		return nil, nil, err
 	}
 	man := &manifest{Root: m.Root, Refreshed: m.now().UTC(), Pages: w.pages}
 	layout(man)
 	for id, e := range man.Pages {
-		if prev := old.Pages[id]; prev != nil && prev.Path != e.Path {
+		prev := old.Pages[id]
+		switch {
+		case prev == nil:
+			w.treeChanged = true
+		case prev.Path != e.Path:
 			w.stats.Moved++
+			w.treeChanged = true
+		case prev.Title != e.Title:
+			w.treeChanged = true
 		}
 	}
 	for id := range old.Pages {
 		if man.Pages[id] == nil {
 			w.stats.Removed++
+			w.treeChanged = true
 		}
 	}
-	if err := m.write(man); err != nil {
-		return Stats{}, err
-	}
-	return w.stats, nil
+	return w, man, nil
 }
 
 type walk struct {
@@ -204,8 +226,14 @@ type walk struct {
 	ctx    context.Context
 	old    *manifest
 	search map[string]*Page
-	pages  map[string]*entry
-	stats  Stats
+	// all fetches every page, changed or not.
+	all   bool
+	pages map[string]*entry
+	// bodies are the pages' rendered content: links to other pages are
+	// placeholders in fetched pages and already resolved in kept ones.
+	bodies      map[string]string
+	stats       Stats
+	treeChanged bool
 }
 
 func (w *walk) visit(id string, root bool) error {
@@ -232,9 +260,14 @@ func (w *walk) visit(id string, root bool) error {
 		return nil
 	}
 	e := &entry{Title: page.Title(), Icon: page.Emoji(), URL: page.URL, LastEdited: page.LastEditedTime.UTC()}
-	cache := filepath.Join(w.m.Dir, cacheDir, id+".md")
-	_, cerr := os.Stat(cache)
-	if prev == nil || !prev.LastEdited.Equal(e.LastEdited) || prev.Fetched.Sub(prev.LastEdited) < settle || cerr != nil {
+	var kept string
+	keep := !w.all && prev != nil && prev.LastEdited.Equal(e.LastEdited) && prev.Fetched.Sub(prev.LastEdited) >= settle
+	if keep {
+		var err error
+		kept, err = w.m.readBody(prev.Path)
+		keep = err == nil
+	}
+	if !keep {
 		blocks, err := w.m.blocks(w.ctx, id)
 		if errors.Is(err, ErrNoAccess) && !root {
 			return nil
@@ -243,9 +276,7 @@ func (w *walk) visit(id string, root bool) error {
 			return fmt.Errorf("page %s: %w", id, err)
 		}
 		r := render(blocks)
-		if err := os.WriteFile(cache, []byte(r.Body), 0o600); err != nil {
-			return err
-		}
+		w.bodies[id] = r.Body
 		e.Fetched, e.Children = w.m.now().UTC(), r.Children
 		if prev == nil {
 			w.stats.Added++
@@ -253,6 +284,7 @@ func (w *walk) visit(id string, root bool) error {
 			w.stats.Updated++
 		}
 	} else {
+		w.bodies[id] = kept
 		e.Fetched, e.Children = prev.Fetched, slices.Clone(prev.Children)
 		if prev.Title != e.Title || prev.Icon != e.Icon {
 			w.stats.Updated++
@@ -325,20 +357,34 @@ func layout(man *manifest) {
 	place(root, "")
 }
 
+// readBody is a mirrored page's content without its front-matter.
+func (m *Mirror) readBody(rel string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(m.Dir, filepath.FromSlash(rel)))
+	if err != nil {
+		return "", err
+	}
+	s, ok := strings.CutPrefix(string(data), "---\n")
+	if ok {
+		_, s, ok = strings.Cut(s, "\n---\n")
+	}
+	if !ok {
+		return "", fmt.Errorf("%s: no front-matter", rel)
+	}
+	return strings.TrimPrefix(s, "\n"), nil
+}
+
 // write renders every page and INDEX.md into Dir, writing only files that
 // changed and removing files that are no longer part of the tree. The
 // manifest is written last.
-func (m *Mirror) write(man *manifest) error {
+func (m *Mirror) write(man *manifest, bodies map[string]string) error {
+	if err := os.MkdirAll(m.Dir, 0o700); err != nil {
+		return err
+	}
 	want := map[string][]byte{}
-	bodies := map[string]string{}
 	for id, e := range man.Pages {
-		body, err := os.ReadFile(filepath.Join(m.Dir, cacheDir, id+".md"))
-		if err != nil {
-			return err
-		}
-		bodies[id] = string(body)
+		body := bodies[id]
 		from := path.Dir(e.Path)
-		resolved := resolve(string(body), func(t string) (string, string, bool) {
+		resolved := resolve(body, func(t string) (string, string, bool) {
 			te := man.Pages[t]
 			if te == nil {
 				return "", "", false
@@ -359,10 +405,7 @@ func (m *Mirror) write(man *manifest) error {
 		}
 		rel, _ := filepath.Rel(m.Dir, p)
 		rel = filepath.ToSlash(rel)
-		switch {
-		case rel == cacheDir && d.IsDir():
-			return filepath.SkipDir
-		case d.IsDir() || rel == manifestFile:
+		if d.IsDir() || rel == manifestFile {
 			return nil
 		}
 		have[rel] = true
@@ -395,9 +438,6 @@ func (m *Mirror) write(man *manifest) error {
 	if err := pruneDirs(m.Dir); err != nil {
 		return err
 	}
-	if err := m.pruneCache(man); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(man, "", "  ")
 	if err != nil {
 		return err
@@ -407,21 +447,6 @@ func (m *Mirror) write(man *manifest) error {
 		return err
 	}
 	return os.Rename(tmp, filepath.Join(m.Dir, manifestFile))
-}
-
-func (m *Mirror) pruneCache(man *manifest) error {
-	entries, err := os.ReadDir(filepath.Join(m.Dir, cacheDir))
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		if man.Pages[strings.TrimSuffix(e.Name(), ".md")] == nil {
-			if err := os.Remove(filepath.Join(m.Dir, cacheDir, e.Name())); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 // pruneDirs removes empty directories under dir.
@@ -549,10 +574,7 @@ func (m *Mirror) Freeze(dst string) (string, error) {
 			return err
 		}
 		rel, _ := filepath.Rel(m.Dir, p)
-		if rel == cacheDir || rel == manifestFile || strings.HasPrefix(rel, manifestFile) {
-			if d.IsDir() {
-				return filepath.SkipDir
-			}
+		if rel == manifestFile || strings.HasPrefix(rel, manifestFile) {
 			return nil
 		}
 		out := filepath.Join(dst, rel)

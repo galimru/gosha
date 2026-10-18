@@ -8,13 +8,8 @@ import (
 
 	"github.com/galimru/gosha/internal/notify"
 	"github.com/galimru/gosha/internal/notion"
-	"github.com/galimru/gosha/internal/store"
 	"github.com/galimru/gosha/internal/tmpl"
 )
-
-// refreshEvery is how often an idle project's context is refreshed. A
-// pickup always refreshes first (DESIGN §6.2).
-const refreshEvery = 15 * time.Minute
 
 // Mirror is the project's Notion mirror.
 func (e *Env) Mirror(p *Project) (*notion.Mirror, error) {
@@ -31,35 +26,21 @@ func (e *Env) Mirror(p *Project) (*notion.Mirror, error) {
 	return &notion.Mirror{Dir: e.Home.Project(p.Name).Context(), Root: root, API: api}, nil
 }
 
-// contextDue reports whether the idle refresh is due: the mirror is
-// missing or old, or the project is paused (possibly over Notion access,
-// which only a refresh can clear).
-func (e *Env) contextDue(ctx context.Context, p *Project) bool {
-	if ps, _ := e.Store.ProjectState(ctx, p.Name); ps != nil && ps.Status == store.StatusPaused {
-		return true
-	}
-	m, err := e.Mirror(p)
-	if err != nil {
-		return true
-	}
-	info, err := m.Info()
-	return err != nil || time.Since(info.Refreshed) >= refreshEvery
-}
-
-// refreshContext brings the project's mirror up to date. Without access to
-// the root page, the project pauses (fail closed, like an invalid config).
+// refreshContext brings the project's mirror up to date before a pickup
+// (DESIGN §6.2). Without access to the root page, the project pauses (fail
+// closed, like an invalid config) until a later pickup's refresh succeeds.
 // Any other failure keeps the last mirror, and is an error only when there
 // is none yet.
 func (e *Env) refreshContext(ctx context.Context, p *Project) error {
 	m, err := e.Mirror(p)
 	if err != nil {
-		return e.pause(ctx, p, fmt.Errorf("notion.root_page: %w", err))
+		return e.pauseNotion(ctx, p, fmt.Errorf("notion.root_page: %w", err))
 	}
 	start := time.Now()
 	st, err := m.Refresh(ctx)
 	switch {
 	case errors.Is(err, notion.ErrNoAccess):
-		return e.pause(ctx, p, fmt.Errorf("can't read the Notion root page (is it shared with the integration?): %w", err))
+		return e.pauseNotion(ctx, p, fmt.Errorf("can't read the Notion root page (is it shared with the integration?): %w", err))
 	case err != nil && ctx.Err() != nil:
 		return err
 	case err != nil:

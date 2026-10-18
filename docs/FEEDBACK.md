@@ -29,11 +29,3 @@ Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejec
 **Today (§9):** ~15 event types, most of which repeat the PR timeline, plus a daily digest that doubles as a liveness signal.
 
 **Change:** paused, Blocked, delivered, usage limit and crash only, plus the daily digest, which stays as a summary of the day (delivered, blocked, queue). For noticing that Gosha has died, add an optional heartbeat URL ping instead of relying on the digest. `--dry-run` reports to stdout only.
-
-## 15. Notion refresh at pickup only
-
-**Status:** agreed
-
-**Today (§6.2):** refresh before every pickup, every 15 minutes while idle, and on every poll while paused.
-
-**Change:** refresh only at pickup; a Notion pause is retried at the next pickup. Prefer a full refetch over rename bookkeeping where they conflict. The markdown mirror itself stays: agents work best with files they can grep, every pass sees the same frozen copy, and no Notion token reaches the agent.

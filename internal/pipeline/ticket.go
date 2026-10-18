@@ -137,14 +137,6 @@ func (e *Env) Pass(ctx context.Context, name, only string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	refreshed := false
-	if e.contextDue(ctx, p) {
-		if err := e.refreshContext(ctx, p); err != nil {
-			return false, err
-		}
-		refreshed = true
-	}
-	e.resume(ctx, p)
 	c, err := e.interrupted(ctx, name, lin, only)
 	if err != nil {
 		return false, err
@@ -163,14 +155,17 @@ func (e *Env) Pass(ctx context.Context, name, only string) (bool, error) {
 		}
 	}
 	if c == nil {
+		// A Notion pause waits for the next pickup's refresh.
+		if !e.pausedForNotion(ctx, p) {
+			e.resume(ctx, p)
+		}
 		return false, nil
 	}
 	// A pickup always starts from the latest context.
-	if !refreshed {
-		if err := e.refreshContext(ctx, p); err != nil {
-			return false, err
-		}
+	if err := e.refreshContext(ctx, p); err != nil {
+		return false, err
 	}
+	e.resume(ctx, p)
 	kb, err := e.freezeContext(p, c.Issue.Identifier)
 	if err != nil {
 		return false, err
