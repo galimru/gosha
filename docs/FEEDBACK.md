@@ -105,14 +105,6 @@ Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejec
 
 **Change:** if `checks.required` is set, gate on those names. Otherwise, whatever appears within `start_grace` must pass, and nothing appearing counts as a pass.
 
-## 10. Extra instructions instead of prompt overrides
-
-**Status:** agreed
-
-**Today (§5.3):** a repo can replace `implement.md`, `address.md` and `review.md`, which makes every template field a public API.
-
-**Change:** prompts are built in. A repo can add an optional `.gosha/instructions.md`, appended to every prompt. The repo's `CLAUDE.md` already applies to agents.
-
 ## 13. Config snapshot per pickup
 
 **Status:** rejected

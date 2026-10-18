@@ -40,7 +40,7 @@ Gosha doesn't replace the project's CI/CD. It produces the changes that the exis
 - **Unattended.** Gosha runs as a background service on any always-on Unix-like host (macOS or Linux): a desktop, a home server or a VPS. Full detail is in the local logs.
 - **Host-agnostic.** Nothing in Gosha assumes a particular machine, OS, package manager or service manager.
 - **Read-only Notion.** Notion is the human's space. Gosha only mirrors it.
-- **Per-project tuning lives in the project repo** (config + prompt templates).
+- **Per-project tuning lives in the project repo** (config + `.gosha/instructions.md`).
 
 ## 2. Human workflow
 
@@ -125,7 +125,7 @@ internal/github/      GitHub REST API via go-github + ghinstallation: App auth, 
 internal/notify/      event types, Telegram sender, rate limiting, retries
 internal/gitx/        bare clone, fetch, ticket checkouts, merge, push (shells out to the git CLI; token injected per command, hooks off)
 internal/agent/       claude CLI runner, prompt rendering, result parsing
-internal/tmpl/        prompt template data model + functions (§5.3)
+internal/tmpl/        prompt data model + functions (§5.3)
 internal/pipeline/    per-ticket state machine, limits, recovery
 internal/store/       SQLite persistence
 internal/daemon/      supervisors, scheduler, graceful shutdown
@@ -170,7 +170,7 @@ Secrets aren't in any config file; they're read from `secrets.env` by fixed key 
 
 ### 5.2 Per project: `<repo>/.gosha/config.yaml`
 
-**Read from the default branch, never from a checkout.** There's no local copy. On every poll, Gosha runs `git fetch origin` in the project's bare clone, then reads the file with `git show origin/<default>:.gosha/config.yaml`; prompt templates are read the same way. (A bare clone has no `origin/*` refs by default, so `gosha add` sets `remote.origin.fetch` to `+refs/heads/*:refs/remotes/origin/*`.) Agents therefore can't change their own rules, and a config change takes effect on the next poll after it reaches the default branch, with no restart.
+**Read from the default branch, never from a checkout.** There's no local copy. On every poll, Gosha runs `git fetch origin` in the project's bare clone, then reads the file with `git show origin/<default>:.gosha/config.yaml`; `.gosha/instructions.md` is read the same way. (A bare clone has no `origin/*` refs by default, so `gosha add` sets `remote.origin.fetch` to `+refs/heads/*:refs/remotes/origin/*`.) Agents therefore can't change their own rules, and a config change takes effect on the next poll after it reaches the default branch, with no restart.
 
 **Invalid or missing config: fail closed.** Gosha never keeps running a project on an outdated config.
 - **Invalid config** (bad YAML, failed validation, a missing secret key): the project goes **paused**. No new tickets are picked up. The config is read once at the start of each pass, and a pass uses it to the end. A run that continues in a later pass (usage limit, restart, Blocked → Ready) uses the config on the default branch at that time; if that config is invalid, the run waits, still In Progress, until it's fixed.
@@ -218,40 +218,17 @@ agent:
   permission_mode: dontask     # dontask (default) | auto | bypass; see §7.1
 ```
 
-### 5.3 Prompt templates: `<repo>/.gosha/prompts/`
+### 5.3 Prompts
 
-| File | Role | Notes |
+The prompts are built into the binary:
+
+| Prompt | Role | Notes |
 |---|---|---|
 | `implement.md` | implementer, first pass | |
 | `address.md` | implementer, feedback pass | review comments, CI failures, conflicts, human comments |
 | `review.md` | reviewer | fresh context every round |
 
-The binary embeds default templates, and any file present in the repo overrides its default.
-
-**Template data model.** Every prompt uses the same Go `text/template` data and functions, so a field means the same thing everywhere.
-
-| Field | Example | Available in |
-|---|---|---|
-| `.Project` | `nextdesk` | all |
-| `.Ticket.ID` | `NXT-12` | all |
-| `.Ticket.Title` | `Add login` | all |
-| `.Ticket.Description` | markdown | prompts |
-| `.Ticket.URL` | Linear link | prompts |
-| `.Ticket.Comments` | human comments since the last run | prompts |
-| `.Context.Dir` / `.Context.Index` | path to this pickup's frozen copy of the mirror (§6.2) / contents of its `INDEX.md` | prompts |
-| `.Branch` / `.BaseBranch` | `gosha/NXT-12-add-login` / `main` | prompts |
-| `.Diff` | diff against the base (cut at 100 KB) | review |
-| `.Feedback.Review` / `.Feedback.CI` | review comments and human PR feedback / failed checks with the failing step of each job log | address |
-| `.Feedback.Conflicts` | files that conflict with the base, as a list | address |
-| `.Feedback.Previous` | the last round's findings and the implementer's reply | review (from round 2) |
-| `.FollowUp.PR` / `.URL` / `.MergeSHA` / `.Summary` / `.Deploy` | the ticket's earlier, merged PR: number, link, merge commit, what it did, how its deploy went; empty unless this is a follow-up | implement |
-| `.Round` | `2` | review, address |
-| `.ResultFile` | path for the result JSON | prompts |
-
-Functions:
-- `slug`: lowercase, non-alphanumerics → `-`, trimmed, at most 40 characters
-- `lower` / `upper`
-- `trunc N`
+A repo can add an optional **`.gosha/instructions.md`**, read from the default branch like the config and appended to every prompt under "Project instructions". The repo's own `CLAUDE.md` applies to agents as well. The prompts themselves can't be replaced, so their data (`.Ticket.*`, `.Feedback.*`, `.FollowUp.*`, …, rendered with Go's `text/template`) is internal and can change with Gosha.
 
 ### 5.4 Secrets
 
@@ -459,7 +436,7 @@ All of them go through the same **address** step (`address.md`, data in `.Feedba
 
 **Comment cursor:** the ticket's comment cursor moves past the new human comments only once the implementer has actually been given them, so an interrupted pass (usage limit, shutdown) doesn't lose instructions.
 
-**Branch naming.** Always `gosha/<ID>-<slug of the title>`, e.g. `gosha/NXT-12-add-login` (`slug`, §5.3). The ticket ID lets Linear's GitHub integration link the branch.
+**Branch naming.** Always `gosha/<ID>-<slug of the title>`, e.g. `gosha/NXT-12-add-login` (the title lowercased, non-alphanumerics as `-`, at most 40 characters). The ticket ID lets Linear's GitHub integration link the branch.
 - **The name is used only when the branch is created.** Gosha stores the branch and PR number in `gosha.db`, and every later step uses that record, never a lookup by name.
 - **Suffixes:** follow-up runs on the same ticket, and names that already exist on the remote without being Gosha's, get `-2`, `-3`, … appended. Gosha never overwrites a branch it doesn't own.
 
@@ -668,7 +645,7 @@ The project's config is **not** in this tree; it's read from the repo (§5.2). `
 ### 11.5 CLI
 Commands act on the `~/.gosha` of the user running them, normally the same user the service runs as.
 
-- `gosha init`: run in a local checkout; writes a starter `.gosha/config.yaml` + default prompts to commit
+- `gosha init`: run in a local checkout; writes a starter `.gosha/config.yaml` to commit
 - `gosha add <repo-url>` / `remove` / `list`
 - `gosha config show <project>`: effective config
 - `gosha validate [path]`: an offline check of a repo's `.gosha/config.yaml` (it parses, fields are valid, referenced files exist). It needs no secrets or network, so it can run in the project's CI.
@@ -715,7 +692,8 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - Notion mirror: page tree → file tree (`README.md` for pages with children, `INDEX.md` map). Databases aren't mirrored for now.
 - Host-agnostic: macOS and Linux. Gosha runs as an existing regular user (the installing user by default) and refuses root; it never creates OS accounts. `gosha service install|uninstall|start|stop|restart|status` manages the systemd or launchd unit.
 - Module path: `github.com/galimru/gosha`.
-- One template data model (`.Ticket.*`, `.Context.*`, …) shared by every prompt. Branches are always `gosha/<ID>-<slug>`, with no pattern to configure; they're tracked through `gosha.db`. (M7)
+- Prompts are built in; a repo adds instructions with `.gosha/instructions.md`, appended to every prompt. (M7)
+- Branches are always `gosha/<ID>-<slug>`, with no pattern to configure; they're tracked through `gosha.db`. (M7)
 - GitHub through its API from Go (go-github); git through the `git` CLI; no `gh` dependency.
 - Secrets are read by fixed key names from `projects/<project>/secrets.env`, then `secrets.env`, then the environment. Config files hold no secrets and no references to them. (M7)
 - All project config lives in the repo's `.gosha/`. The global config is machine-level only; projects are discovered from `~/.gosha/projects/`.
