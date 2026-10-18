@@ -204,8 +204,8 @@ func (e *Env) handle(ctx context.Context, p *Project, st *linear.States, is issu
 	return nil
 }
 
-// claim moves the ticket to In Progress, records the run and moves the
-// comment cursor past everything on the ticket.
+// claim moves the ticket to In Progress, records the run and notes the
+// newest comment, which becomes the cursor once the agent has the comments.
 func (t *ticket) claim(ctx context.Context, all []linear.Comment) error {
 	if err := t.issues.Transition(ctx, t.issue.ID, t.states.InProgress.ID); err != nil {
 		return err
