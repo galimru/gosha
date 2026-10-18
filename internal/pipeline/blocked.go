@@ -15,6 +15,9 @@ var stepNames = map[string]string{
 	StepReview:    "reviewing the pull request",
 	StepAddress:   "addressing feedback on the pull request",
 	StepChecks:    "waiting for checks",
+	StepFix:       "fixing failed checks",
+	StepSync:      "merging the base branch into the pull request",
+	StepMerge:     "merging the pull request",
 }
 
 // block posts the Blocked comment, moves the ticket to Blocked and keeps

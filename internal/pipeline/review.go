@@ -26,9 +26,23 @@ const maxDiff = 100 << 10
 // interrupted run continues at the step it stopped at.
 func (t *ticket) resumeOpen(ctx context.Context) error {
 	if !t.fromReady {
+		switch t.run.Step {
+		case StepChecks, StepSync, StepMerge:
+			return t.checks(ctx)
+		case StepFix:
+			fb, err := t.savedFailure(ctx)
+			if err != nil {
+				return err
+			}
+			if fb == nil {
+				return t.checks(ctx)
+			}
+			return t.fix(ctx, *fb)
+		}
 		return t.reviewLoop(ctx, t.run.Step == StepAddress)
 	}
-	t.run.ReviewRound = 0
+	t.run.ReviewRound, t.run.CheckRound = 0, 0
+	t.run.CheckedSHA, t.run.ChecksResult = "", ""
 	fb, err := t.prs.HumanFeedback(ctx, t.run.PRNumber, t.run.PRCursor)
 	if err != nil {
 		return err
@@ -40,9 +54,9 @@ func (t *ticket) resumeOpen(ctx context.Context) error {
 	return t.reviewLoop(ctx, false)
 }
 
-// reviewLoop reviews and addresses until the reviewer approves (the run
-// parks at checks), the round limit is hit or the ticket goes Blocked
-// (DESIGN §8.3). With addressFirst, it starts with an address pass.
+// reviewLoop reviews and addresses until the reviewer approves (then on to
+// checks), the round limit is hit or the ticket goes Blocked (DESIGN §8.3).
+// With addressFirst, it starts with an address pass.
 func (t *ticket) reviewLoop(ctx context.Context, addressFirst bool) error {
 	if addressFirst {
 		if err := t.address(ctx); err != nil || t.run.Step == StepBlocked {
@@ -51,13 +65,18 @@ func (t *ticket) reviewLoop(ctx context.Context, addressFirst bool) error {
 	}
 	limit := t.p.Config.Review.MaxRounds
 	for {
+		before, recheck := t.run.ReviewRound, t.recheck
 		res, fb, err := t.review(ctx)
+		t.recheck = false
 		if err != nil || res == nil {
 			return err
 		}
 		if res.Verdict == agent.VerdictApprove && res.Count(agent.SeverityMust) == 0 && len(fb) == 0 {
+			if recheck {
+				t.run.ReviewRound = before
+			}
 			t.run.BlockedReason = ""
-			return t.save(ctx, StepChecks)
+			return t.checks(ctx)
 		}
 		if t.run.ReviewRound >= limit {
 			return t.block(ctx, roundsExhausted(limit, res, fb), nil)
@@ -97,7 +116,7 @@ func (t *ticket) review(ctx context.Context) (*agent.ReviewerResult, []github.Fe
 	limit := t.p.Config.Review.MaxRounds
 	if t.run.ReviewID == 0 {
 		round := t.run.ReviewRound + 1
-		id, err := t.prs.CreateReview(ctx, t.run.PRNumber, head, t.reviewBody(res, round, limit), t.reviewComments(res))
+		id, err := t.prs.CreateReview(ctx, t.run.PRNumber, head, t.reviewBody(res, t.roundLabel(round, limit)), t.reviewComments(res))
 		if err != nil {
 			return nil, nil, err
 		}
@@ -110,13 +129,10 @@ func (t *ticket) review(ctx context.Context) (*agent.ReviewerResult, []github.Fe
 	if err != nil {
 		return nil, nil, err
 	}
-	msg := fmt.Sprintf("%s · review %d/%d %s · %d must, %d should, %d nit", t.issue.Identifier, t.run.ReviewRound, limit,
+	msg := fmt.Sprintf("%s · %s %s · %d must, %d should, %d nit", t.issue.Identifier, strings.TrimPrefix(t.roundLabel(t.run.ReviewRound, limit), "Gosha "),
 		verdictMark(res), res.Count(agent.SeverityMust), res.Count(agent.SeverityShould), res.Count(agent.SeverityNit))
 	if len(fb) > 0 {
 		msg += fmt.Sprintf(" · %d new human PR comments", len(fb))
-	}
-	if res.Verdict == agent.VerdictApprove && res.Count(agent.SeverityMust) == 0 && len(fb) == 0 {
-		msg += " · waiting for checks (M4)"
 	}
 	t.notify(msg, t.prLink(), t.ticketLink())
 	return res, fb, nil
@@ -150,6 +166,7 @@ func (t *ticket) runReviewer(ctx context.Context, head string) (*agent.ReviewerR
 	}
 	spec := t.spec(prompt, dir, rp)
 	spec.DisallowedTools = agent.ReviewerDisallowed
+	defer t.agentPass(ctx)()
 	res, _, err := t.e.review(t.actx, spec, resultFile)
 	if err != nil {
 		return nil, t.agentFailed(ctx, "reviewer", err)
@@ -198,41 +215,9 @@ func (t *ticket) address(ctx context.Context) error {
 		return err
 	}
 	round := max(t.run.ReviewRound, 1)
-
-	checkout := t.checkout()
-	fresh, rp, err := t.prepare(ctx, checkout, roleAddress)
-	if err != nil || t.run.Step == StepBlocked {
-		return err
-	}
-	resultFile := filepath.Join(rp.agent.RunDir, "result.json")
-	prompt, err := agent.RenderPrompt(ctx, t.p.Repo, t.p.Commit, "address.md", tmpl.Data{
-		Project: t.p.Name, Ticket: Ticket(t.issue, t.comments),
-		Branch: t.run.Branch, BaseBranch: t.run.BaseBranch, ResultFile: resultFile,
-		Round: round, Feedback: tmpl.Feedback{Review: renderFeedback(rev, fb)},
-	})
-	if err != nil {
-		return t.block(ctx, err.Error(), nil)
-	}
-	spec := t.spec(prompt, checkout, rp)
-	if !fresh {
-		spec.Resume = t.run.ImplSession
-	}
-	res, err := t.runImplementer(ctx, spec, resultFile)
+	res, changed, err := t.feedbackPass(ctx, round, tmpl.Feedback{Review: renderFeedback(rev, fb)})
 	if res == nil {
 		return err
-	}
-	if ok, err := t.collect(ctx, checkout); !ok {
-		return err
-	}
-	newHead, err := t.p.Repo.RevParse(ctx, "refs/heads/"+t.run.Branch)
-	if err != nil {
-		return err
-	}
-	changed := newHead != head
-	if changed {
-		if ok, err := t.push(ctx); !ok {
-			return err
-		}
 	}
 	reply := fmt.Sprintf("**Round %d addressed.**\n\n", round)
 	if !changed {
@@ -271,15 +256,61 @@ func (t *ticket) address(ctx context.Context) error {
 	return nil
 }
 
+// feedbackPass runs the implementer with address.md in the ticket checkout,
+// resuming its session, then collects and pushes what it committed. It
+// returns a nil result when the step ended (Blocked, usage limit, shutdown).
+func (t *ticket) feedbackPass(ctx context.Context, round int, fb tmpl.Feedback) (*agent.ImplementerResult, bool, error) {
+	head, err := t.p.Repo.RevParse(ctx, "refs/heads/"+t.run.Branch)
+	if err != nil {
+		return nil, false, err
+	}
+	checkout := t.checkout()
+	fresh, rp, err := t.prepare(ctx, checkout, roleAddress)
+	if err != nil || t.run.Step == StepBlocked {
+		return nil, false, err
+	}
+	resultFile := filepath.Join(rp.agent.RunDir, "result.json")
+	prompt, err := agent.RenderPrompt(ctx, t.p.Repo, t.p.Commit, "address.md", tmpl.Data{
+		Project: t.p.Name, Ticket: Ticket(t.issue, t.comments),
+		Branch: t.run.Branch, BaseBranch: t.run.BaseBranch, ResultFile: resultFile,
+		Round: round, Feedback: fb,
+	})
+	if err != nil {
+		return nil, false, t.block(ctx, err.Error(), nil)
+	}
+	spec := t.spec(prompt, checkout, rp)
+	if !fresh {
+		spec.Resume = t.run.ImplSession
+	}
+	res, err := t.runImplementer(ctx, spec, resultFile)
+	if res == nil {
+		return nil, false, err
+	}
+	if ok, err := t.collect(ctx, checkout); !ok {
+		return nil, false, err
+	}
+	newHead, err := t.p.Repo.RevParse(ctx, "refs/heads/"+t.run.Branch)
+	if err != nil {
+		return nil, false, err
+	}
+	changed := newHead != head
+	if changed {
+		if ok, err := t.push(ctx); !ok {
+			return nil, false, err
+		}
+	}
+	return res, changed, nil
+}
+
 // reviewBody is the PR review's body: the verdict mark (an App can't
 // approve its own PR, DESIGN §8.6), the round and the summary.
-func (t *ticket) reviewBody(res *agent.ReviewerResult, round, limit int) string {
+func (t *ticket) reviewBody(res *agent.ReviewerResult, label string) string {
 	verdict := "Changes requested"
 	if res.Verdict == agent.VerdictApprove {
 		verdict = "Approved"
 	}
-	return fmt.Sprintf("%s **%s** · Gosha review %d/%d\n\n%s\n\n%d must · %d should · %d nit",
-		verdictMark(res), verdict, round, limit, strings.TrimSpace(t.e.Redactor.Redact(res.Summary)),
+	return fmt.Sprintf("%s **%s** · %s\n\n%s\n\n%d must · %d should · %d nit",
+		verdictMark(res), verdict, label, strings.TrimSpace(t.e.Redactor.Redact(res.Summary)),
 		res.Count(agent.SeverityMust), res.Count(agent.SeverityShould), res.Count(agent.SeverityNit))
 }
 
@@ -290,6 +321,16 @@ func (t *ticket) reviewComments(res *agent.ReviewerResult) []github.ReviewCommen
 			Body: fmt.Sprintf("**%s:** %s", c.Severity, t.e.Redactor.Redact(c.Body))})
 	}
 	return out
+}
+
+// roundLabel names a review round, e.g. "Gosha review 2/3". A review of a
+// fix for failed checks or conflicts is a re-review: it only takes a round
+// if it requests changes.
+func (t *ticket) roundLabel(round, limit int) string {
+	if t.recheck {
+		return "Gosha re-review after fixes"
+	}
+	return fmt.Sprintf("Gosha review %d/%d", round, limit)
 }
 
 func verdictMark(res *agent.ReviewerResult) string {
