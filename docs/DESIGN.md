@@ -133,6 +133,7 @@ internal/agent/       claude CLI runner, prompt rendering, result parsing
 internal/tmpl/        prompt data model + functions (§5.3)
 internal/pipeline/    per-ticket state machine, limits, recovery
 internal/store/       SQLite persistence
+internal/service/     systemd and launchd units, service user, login-shell PATH
 internal/daemon/      supervisors, project scan, panic isolation, heartbeat, graceful shutdown
 internal/flock/       advisory file locks shared by every gosha process (run.lock, context.lock)
 ```
@@ -631,16 +632,17 @@ The project's config is **not** in this tree; it's read from the repo (§5.2). `
 | Unit | `/etc/systemd/system/gosha.service` | `/Library/LaunchDaemons/dev.gosha.daemon.plist` |
 | Runs as | `User=<service user>` | `UserName=<service user>` |
 | Start at boot / restart on failure | `WantedBy=multi-user.target`, `Restart=on-failure` | `RunAtLoad`, `KeepAlive` |
-| Install does | write unit → `daemon-reload` → `enable --now` | write plist → `launchctl bootstrap system` |
+| Install does | write unit → `daemon-reload` → `enable` → `restart` | `launchctl bootout` (if loaded) → write plist → `launchctl bootstrap system` |
 | Uninstall does | `disable --now` → remove unit → `daemon-reload` | `launchctl bootout` → remove plist |
 
 - **`install` flags:**
   - `--user <name>` (default: the invoking user, i.e. `$SUDO_USER` under sudo, otherwise the current user; must exist and must not be root)
   - `--binary` (default: the resolved path of the running `gosha`)
-  - `--home` (default: the target user's `~/.gosha`)
+  - `--home` (the global flag; default: the target user's `~/.gosha`)
   - `--print` (show the unit file without installing it)
-- **Environment:** the unit sets an explicit `PATH`, taken from the target user's login shell at install time, plus `HOME`. That way the agent's tools are found.
-- **Before writing anything,** `install` checks that the user exists and isn't root, the binary is executable, `gosha doctor` passes for that user, and the global config is valid.
+- **Environment:** the unit sets an explicit `PATH`, taken from the target user's login shell at install time (`su -l <user>`), plus `HOME`. That way the agent's tools are found.
+- **Stopping:** systemd uses `KillMode=mixed` and launchd `ExitTimeOut`, both with 60s, so SIGTERM reaches Gosha first and it stops its agents itself.
+- **Before writing anything,** `install` checks that the user exists and isn't root, the binary is executable, and `gosha doctor` (which includes the global config) passes when run as that user.
 - **Re-running `install`** is safe: it replaces the unit and restarts the service. Upgrades go through `gosha upgrade` (§11.4).
 - **The unit runs the binary by the absolute path it had at install time.** Moving the binary means running `install` again.
 - **`uninstall`** stops and removes only the service. Config, secrets and state (§11.3) are left untouched.
