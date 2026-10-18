@@ -585,7 +585,7 @@ Everything lives in **one directory**, `~/.gosha` of the running user. `--home` 
 ├── secrets.env                              # shared secrets, chmod 600
 ├── github-app.pem                           # chmod 600
 ├── gosha.db                                 # runs/state for all projects
-├── logs/gosha.log                           # structured, rotated; every line tagged with project
+├── logs/gosha.log                           # JSON lines, rotated at 20 MB (5 compressed backups); tagged with project
 ├── projects/
     └── <project>/
         ├── secrets.env                      # optional overrides, chmod 600
@@ -671,7 +671,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - `gosha validate [path]`: an offline check of a repo's `.gosha/config.yaml` (it parses, fields are valid, referenced files exist). It needs no secrets or network, so it can run in the project's CI.
 - `gosha doctor [project]`: everything about the host: git, claude, the sandbox tools, file permissions, the global config, the GitHub App, and for each project (or the one named) its config on the default branch, its secrets, its Linear team, states and actor (§8.6), and Notion access to its root page
 - `gosha status`: projects, active or paused state (and why), the context mirror (pages, last refresh), current ticket and step, usage-limit pause
-- `gosha logs [-f] [--project nextdesk]`
+- `gosha logs [-f] [--project nextdesk] [-n 100]`: the log as text, one line per record; `-f` follows it across rotation. Only `gosha daemon` and `gosha run` rotate the file; other commands just append to it
 - `gosha context refresh <project>`: pull the latest from the context source (Notion) into the local mirror
 - `gosha context path <project>`: print where the mirror lives
 - `gosha context show <project>`: print `INDEX.md`, the page tree the agent starts from

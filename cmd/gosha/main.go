@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"gopkg.in/natefinch/lumberjack.v2"
 
 	"github.com/galimru/gosha/internal/config"
 	"github.com/galimru/gosha/internal/github"
@@ -60,19 +62,29 @@ func (a *app) rootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			return a.init()
+			return a.init(longRunning[cmd.Name()])
 		},
 	}
 	root.PersistentFlags().StringVar(&a.homeFlag, "home", "", "Gosha home directory (default $GOSHA_HOME or ~/.gosha)")
 	root.PersistentFlags().StringVar(&a.logLevel, "log-level", "info", "log level: debug, info, warn, error")
 	root.AddCommand(
 		a.addCmd(), a.removeCmd(), a.listCmd(), a.validateCmd(), a.doctorCmd(),
-		a.secretsCmd(), a.statusCmd(), a.runCmd(), a.daemonCmd(), a.contextCmd(),
+		a.secretsCmd(), a.statusCmd(), a.runCmd(), a.daemonCmd(), a.logsCmd(), a.contextCmd(),
 	)
 	return root
 }
 
-func (a *app) init() error {
+// longRunning are the commands that rotate the log file. Short commands
+// only append to it, so they never rotate it from under the daemon.
+var longRunning = map[string]bool{"daemon": true, "run": true}
+
+// Log rotation: gosha.log plus this many compressed backups of this size.
+const (
+	logMaxMB   = 20
+	logBackups = 5
+)
+
+func (a *app) init(rotate bool) error {
 	var err error
 	if a.home, err = config.ResolveHome(a.homeFlag); err != nil {
 		return err
@@ -87,7 +99,7 @@ func (a *app) init() error {
 	// Log to the file only once the home exists; commands never create it
 	// just to log.
 	if fi, err := os.Stat(a.home.Dir()); err == nil && fi.IsDir() {
-		if f, err := openLog(a.home.LogFile()); err == nil {
+		if f, err := openLog(a.home.LogFile(), rotate); err == nil {
 			a.closers = append(a.closers, func() { f.Close() })
 			h = teeHandler{h, slog.NewJSONHandler(f, opts)}
 		}
@@ -96,9 +108,12 @@ func (a *app) init() error {
 	return nil
 }
 
-func openLog(path string) (*os.File, error) {
+func openLog(path string, rotate bool) (io.WriteCloser, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
+	}
+	if rotate {
+		return &lumberjack.Logger{Filename: path, MaxSize: logMaxMB, MaxBackups: logBackups, Compress: true}, nil
 	}
 	return os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 }
