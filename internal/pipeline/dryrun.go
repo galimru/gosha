@@ -3,12 +3,10 @@ package pipeline
 import (
 	"context"
 	"fmt"
-
-	"github.com/galimru/gosha/internal/notify"
 )
 
 // DryRun does one pickup pass for a project without changing anything in
-// Linear or GitHub, and reports what would happen to stdout and Telegram.
+// Linear or GitHub, and reports what would happen.
 // With ticket set, only that Ready ticket is considered.
 func (e *Env) DryRun(ctx context.Context, name, ticket string) (string, error) {
 	p, err := e.LoadProject(ctx, name)
@@ -23,16 +21,7 @@ func (e *Env) DryRun(ctx context.Context, name, ticket string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	plan := Plan(p.Config, lin.States, cands)
-	report := Report(p.Commit, plan)
-	ev := notify.Event{Project: name, Text: report}
-	for _, d := range plan {
-		if d.Action == Pickup && d.Issue.URL != "" {
-			ev.Links = append(ev.Links, notify.Link{Text: d.Issue.Identifier, URL: d.Issue.URL})
-		}
-	}
-	e.Notify.Send(ev)
-	return report, nil
+	return Report(p.Commit, Plan(p.Config, lin.States, cands)), nil
 }
 
 // candidates gathers the Ready tickets with what pickup needs to decide on

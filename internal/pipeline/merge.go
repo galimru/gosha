@@ -48,7 +48,6 @@ func (t *ticket) merge(ctx context.Context) error {
 		return err
 	}
 	t.e.Log.Info("merged", "project", t.p.Name, "ticket", t.issue.Identifier, "pr", t.run.PRURL, "sha", sha)
-	t.notify(fmt.Sprintf("%s · %s-merged %.7s", t.issue.Identifier, t.p.Config.GitHub.MergeMethod, sha), t.prLink())
 	return t.afterMerge(ctx)
 }
 
@@ -91,7 +90,7 @@ func (t *ticket) syncBase(ctx context.Context) error {
 	if err := os.RemoveAll(t.checkout()); err != nil {
 		return err
 	}
-	t.notify(fmt.Sprintf("%s · merged %s into the branch · checking again", t.issue.Identifier, t.run.BaseBranch), t.prLink())
+	t.e.Log.Info("base merged in", "project", t.p.Name, "ticket", t.issue.Identifier, "base", t.run.BaseBranch)
 	return t.checks(ctx)
 }
 
@@ -128,6 +127,6 @@ func (t *ticket) conflicts(ctx context.Context, head string) error {
 	if err := t.recordFailure(ctx, head, fb); err != nil {
 		return err
 	}
-	t.notify(fmt.Sprintf("%s · conflicts with %s → resolving %d/%d", t.issue.Identifier, t.run.BaseBranch, t.run.CheckRound, limit), t.prLink())
+	t.e.Log.Info("base conflicts", "project", t.p.Name, "ticket", t.issue.Identifier, "base", t.run.BaseBranch, "round", t.run.CheckRound)
 	return t.fix(ctx, fb)
 }

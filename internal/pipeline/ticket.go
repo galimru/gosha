@@ -296,7 +296,6 @@ func (t *ticket) claim(ctx context.Context, all []linear.Comment) error {
 		t.cursor = &store.Cursor{CommentID: last.ID, At: last.CreatedAt}
 	}
 	t.e.Log.Info("picked up", "project", t.p.Name, "ticket", t.issue.Identifier, "mode", mode)
-	t.notify(fmt.Sprintf("%s %s · picked up (%s)", t.issue.Identifier, t.issue.Title, mode), t.ticketLink())
 	return nil
 }
 
@@ -469,7 +468,7 @@ func (t *ticket) implement(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	t.notify(fmt.Sprintf("%s · implemented · %s · %s\n%s", t.issue.Identifier, diff, time.Since(t.started).Round(time.Minute), res.Summary))
+	t.e.Log.Info("implemented", "project", t.p.Name, "ticket", t.issue.Identifier, "diff", diff.String(), "took", time.Since(t.started).Round(time.Minute))
 	return t.publish(ctx, res, diff)
 }
 
@@ -641,7 +640,6 @@ func (t *ticket) publish(ctx context.Context, res *agent.ImplementerResult, diff
 		return err
 	}
 	t.e.Log.Info("PR opened", "project", t.p.Name, "ticket", t.issue.Identifier, "pr", pr.URL)
-	t.notify(fmt.Sprintf("%s · PR #%d opened", t.issue.Identifier, pr.Number), t.prLink(), t.ticketLink())
 	return t.reviewLoop(ctx, false)
 }
 

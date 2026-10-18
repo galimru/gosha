@@ -63,8 +63,8 @@ func TestContextReachesAgents(t *testing.T) {
 	if err := h.env.refreshContext(h.ctx, h.p); err != nil {
 		t.Fatal(err)
 	}
-	if ev := strings.Join(h.events.take(), "\n"); !strings.Contains(ev, "context · 1 added") {
-		t.Errorf("events = %s", ev)
+	if ev := h.events.take(); len(ev) != 0 {
+		t.Errorf("a refresh isn't an alert: %q", ev)
 	}
 	kb, err := h.env.freezeContext(h.p, "NXT-12")
 	if err != nil {

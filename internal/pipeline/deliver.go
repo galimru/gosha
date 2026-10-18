@@ -11,7 +11,6 @@ import (
 
 	"github.com/galimru/gosha/internal/agent"
 	"github.com/galimru/gosha/internal/github"
-	"github.com/galimru/gosha/internal/notify"
 	"github.com/galimru/gosha/internal/store"
 	"github.com/galimru/gosha/internal/tmpl"
 )
@@ -154,11 +153,7 @@ func (t *ticket) deployWatch(ctx context.Context) error {
 	if err := t.save(ctx, StepDeploy); err != nil {
 		return err
 	}
-	mark := "✅"
-	if !t.report.Deploy.ok() {
-		mark = "❌"
-	}
-	t.notify(fmt.Sprintf("%s · deploy %s %s", t.issue.Identifier, mark, t.report.Deploy.Conclusion), notify.Link{Text: "run", URL: t.report.Deploy.URL})
+	t.e.Log.Info("deploy", "project", t.p.Name, "ticket", t.issue.Identifier, "conclusion", t.report.Deploy.Conclusion, "url", t.report.Deploy.URL)
 	return t.deliver(ctx)
 }
 
@@ -205,7 +200,11 @@ func (t *ticket) deliver(ctx context.Context) error {
 		return err
 	}
 	t.e.Log.Info("delivered", "project", t.p.Name, "ticket", t.issue.Identifier)
-	t.notify(fmt.Sprintf("%s · ✅ delivered · In Review", t.issue.Identifier), t.ticketLink(), t.prLink())
+	msg := fmt.Sprintf("%s · ✅ delivered · In Review", t.issue.Identifier)
+	if d := t.report.Deploy; d != nil && !d.ok() {
+		msg += " · deploy ❌ " + d.Conclusion
+	}
+	t.notify(msg, t.ticketLink(), t.prLink())
 	return nil
 }
 

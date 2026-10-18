@@ -74,11 +74,9 @@ func TestChecksGreenMerges(t *testing.T) {
 			t.Errorf("Delivered comment has %q:\n%s", not, h.lin.comments[0])
 		}
 	}
-	ev := strings.Join(h.events.take(), "\n")
-	for _, want := range []string{"checks ✅ 1/1", "squash-merged merge-", "delivered · In Review"} {
-		if !strings.Contains(ev, want) {
-			t.Errorf("events missing %q:\n%s", want, ev)
-		}
+	// Telegram gets the outcome only.
+	if ev := h.events.take(); len(ev) != 1 || !strings.Contains(ev[0], "NXT-12 · ✅ delivered · In Review") {
+		t.Errorf("events = %q", ev)
 	}
 }
 
@@ -122,11 +120,8 @@ func TestFailedCheckFixed(t *testing.T) {
 	if !strings.Contains(h.prs.comments[0], "**Check round 1: fixed.**") {
 		t.Errorf("PR comments = %v", h.prs.comments)
 	}
-	ev := strings.Join(h.events.take(), "\n")
-	for _, want := range []string{"checks ❌ test → fixing 1/3", "fixed (check round 1/3)", "re-review after fixes ✅", "checks ✅ 1/1"} {
-		if !strings.Contains(ev, want) {
-			t.Errorf("events missing %q:\n%s", want, ev)
-		}
+	if ev := h.events.take(); len(ev) != 1 || !strings.Contains(ev[0], "delivered") {
+		t.Errorf("events = %q", ev)
 	}
 }
 

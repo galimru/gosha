@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/galimru/gosha/internal/notify"
 	"github.com/galimru/gosha/internal/notion"
 	"github.com/galimru/gosha/internal/tmpl"
 )
@@ -52,7 +51,6 @@ func (e *Env) refreshContext(ctx context.Context, p *Project) error {
 	}
 	if st.Changed() {
 		e.Log.Info("context refreshed", "project", p.Name, "changes", st.String(), "took", time.Since(start).Round(time.Millisecond))
-		e.Notify.Send(notify.Event{Project: p.Name, Text: "context · " + st.String()})
 	}
 	return nil
 }

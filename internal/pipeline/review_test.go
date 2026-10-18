@@ -53,12 +53,6 @@ func TestReviewFixRound(t *testing.T) {
 			t.Errorf("second review prompt missing %q", want)
 		}
 	}
-	ev := strings.Join(h.events.take(), "\n")
-	for _, want := range []string{"review 1/3 ❌ · 1 must", "addressed 1 comments (round 1) · PR now +2 −0 in 2 files", "review 2/3 ✅"} {
-		if !strings.Contains(ev, want) {
-			t.Errorf("events missing %q:\n%s", want, ev)
-		}
-	}
 }
 
 func TestReviewRoundsExhausted(t *testing.T) {

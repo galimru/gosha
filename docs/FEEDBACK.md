@@ -21,11 +21,3 @@ Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejec
 **Proposed:** a run keeps the config it was picked up with, like the frozen context, and validation only gates new pickups.
 
 **Why rejected:** the code already reads the config once per pass (`Pass` in `internal/pipeline/ticket.go`) and takes the ticket as far as it can with it, so a change on `main` doesn't affect a pass in progress. A change only matters when an interrupted run continues in a later pass (usage limit, restart, Blocked → Ready): a valid new config is used, which is what you want after a fix, and an invalid one pauses the project until `main` is fixed. Snapshotting would add storing each run's config in the database, for no real gain.
-
-## 14. Telegram for alerts only
-
-**Status:** agreed
-
-**Today (§9):** ~15 event types, most of which repeat the PR timeline, plus a daily digest that doubles as a liveness signal.
-
-**Change:** paused, Blocked, delivered, usage limit and crash only, plus the daily digest, which stays as a summary of the day (delivered, blocked, queue). For noticing that Gosha has died, add an optional heartbeat URL ping instead of relying on the digest. `--dry-run` reports to stdout only.

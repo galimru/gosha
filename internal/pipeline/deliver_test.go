@@ -47,8 +47,8 @@ func TestDeployWatched(t *testing.T) {
 			t.Errorf("Delivered comment missing %q:\n%s", want, h.lin.comments[0])
 		}
 	}
-	if ev := strings.Join(h.events.take(), "\n"); !strings.Contains(ev, "deploy ✅ success") {
-		t.Errorf("events:\n%s", ev)
+	if ev := h.events.take(); len(ev) != 1 || strings.Contains(ev[0], "deploy") {
+		t.Errorf("events = %q", ev)
 	}
 }
 
@@ -72,6 +72,9 @@ func TestDeployFailureDeliversThenFollowsUp(t *testing.T) {
 	}
 	if strings.Contains(c, "**build**") || strings.Contains(c, "https://demo.example.com") {
 		t.Errorf("Delivered comment lists a passing job or the deploy URL:\n%s", c)
+	}
+	if ev := h.events.take(); len(ev) != 1 || !strings.Contains(ev[0], "delivered · In Review · deploy ❌ failure") {
+		t.Errorf("events = %q", ev)
 	}
 
 	// A human asks for a fix: a follow-up on the merged code.
@@ -158,9 +161,6 @@ func TestFollowUpAfterDelivery(t *testing.T) {
 		if !strings.Contains(p, want) {
 			t.Errorf("follow-up prompt missing %q:\n%s", want, p)
 		}
-	}
-	if ev := strings.Join(h.events.take(), "\n"); !strings.Contains(ev, "picked up (fresh (follow-up))") {
-		t.Errorf("events:\n%s", ev)
 	}
 }
 

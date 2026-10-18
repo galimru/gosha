@@ -53,11 +53,7 @@ func (t *ticket) checks(ctx context.Context) error {
 		if err := t.save(ctx, StepChecks); err != nil {
 			return err
 		}
-		msg := fmt.Sprintf("%s · checks ✅ %d/%d", t.issue.Identifier, len(res.checks), len(res.checks))
-		if len(res.checks) == 0 {
-			msg = fmt.Sprintf("%s · no checks appeared", t.issue.Identifier)
-		}
-		t.notify(msg, t.prLink())
+		t.e.Log.Info("checks passed", "project", t.p.Name, "ticket", t.issue.Identifier, "checks", len(res.checks))
 		return t.merge(ctx)
 	}
 	if len(res.failed)+len(res.pending) == 0 {
@@ -76,7 +72,7 @@ func (t *ticket) checks(ctx context.Context) error {
 	if err := t.recordFailure(ctx, head, fb); err != nil {
 		return err
 	}
-	t.notify(fmt.Sprintf("%s · checks ❌ %s → fixing %d/%d", t.issue.Identifier, strings.Join(names, ", "), t.run.CheckRound, limit), t.prLink())
+	t.e.Log.Info("checks failed", "project", t.p.Name, "ticket", t.issue.Identifier, "failed", names, "round", t.run.CheckRound)
 	return t.fix(ctx, fb)
 }
 
@@ -258,7 +254,7 @@ func (t *ticket) fix(ctx context.Context, fb tmpl.Feedback) error {
 			return err
 		}
 	}
-	round, limit := t.run.CheckRound, t.p.Config.Checks.MaxRounds
+	round := t.run.CheckRound
 	res, changed, err := t.feedbackPass(ctx, round, fb)
 	if res == nil {
 		return err
@@ -291,11 +287,6 @@ func (t *ticket) fix(ctx context.Context, fb tmpl.Feedback) error {
 	if err := t.save(ctx, StepReview); err != nil {
 		return err
 	}
-	diff, err := t.p.Repo.Diff(ctx, t.run.BaseBranch, t.run.Branch)
-	if err != nil {
-		return err
-	}
-	t.notify(fmt.Sprintf("%s · fixed (check round %d/%d) · PR now %s", t.issue.Identifier, round, limit, diff), t.prLink())
 	t.recheck = true
 	return t.reviewLoop(ctx, false)
 }

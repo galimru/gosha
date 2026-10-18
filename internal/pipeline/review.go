@@ -117,9 +117,8 @@ func (t *ticket) review(ctx context.Context) (*agent.ReviewerResult, error) {
 			return nil, err
 		}
 	}
-	msg := fmt.Sprintf("%s · %s %s · %d must, %d should, %d nit", t.issue.Identifier, strings.TrimPrefix(t.roundLabel(t.run.ReviewRound, limit), "Gosha "),
-		verdictMark(res), res.Count(agent.SeverityMust), res.Count(agent.SeverityShould), res.Count(agent.SeverityNit))
-	t.notify(msg, t.prLink(), t.ticketLink())
+	t.e.Log.Info("reviewed", "project", t.p.Name, "ticket", t.issue.Identifier, "round", t.run.ReviewRound,
+		"verdict", res.Verdict, "must", res.Count(agent.SeverityMust))
 	return res, nil
 }
 
@@ -211,19 +210,7 @@ func (t *ticket) address(ctx context.Context) error {
 	if err := t.save(ctx, StepReview); err != nil {
 		return err
 	}
-	n := 0
-	if rev != nil {
-		n = len(rev.Comments)
-	}
-	what := "no code changes"
-	if changed {
-		diff, err := t.p.Repo.Diff(ctx, t.run.BaseBranch, t.run.Branch)
-		if err != nil {
-			return err
-		}
-		what = "PR now " + diff.String()
-	}
-	t.notify(fmt.Sprintf("%s · addressed %d comments (round %d) · %s", t.issue.Identifier, n, round, what), t.prLink())
+	t.e.Log.Info("addressed", "project", t.p.Name, "ticket", t.issue.Identifier, "round", round, "changed", changed)
 	return nil
 }
 

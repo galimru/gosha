@@ -143,6 +143,15 @@ Changes from the plan:
 
 Simplifies what M0–M6 built, using the agreed points in [FEEDBACK.md](FEEDBACK.md). Each point's PR moves it into DESIGN.md and removes it from FEEDBACK.md; the two rejected points only need their DESIGN.md fixes (§5.2, §8 feedback table).
 
+**Status: built** (2026-10-18), in one PR with a commit per point, pending the end-to-end check below on a real project. Gosha isn't live yet, so nothing is migrated: existing migrations were edited in place, and an old `gosha.db` or `~/.gosha/projects/*/worktrees/` should be deleted.
+
+Changes from the plan:
+- **The reviewer keeps any Bash,** but in the sandbox it can write only its pass's temp directory, so its clone is read-only. With the sandbox off, only the removed edit tools and the `auto` classifier stop it from writing.
+- **A Notion access pause is recorded as such** (`project_state.notion`), so other passes don't clear it; only a pickup's refresh does.
+- **A tree change refetches every page** (a page added, renamed, moved or removed, or a title changed); content edits still fetch only the changed pages.
+- **`gosha auth status` and `gosha service` didn't exist yet,** so point 18 removed `auth linear` and moved its checks into `doctor`; `service` stays in M8.
+- **The daily digest is still only configured;** it's built in M8 with the daemon. The heartbeat ping is in `gosha run`'s loop.
+
 - **Sandbox:** agent workspaces in `workspaces/` (1), `agent.sandbox` picks the permission mode (2), no `agent.setup` (3), read-only reviewer (17)
 - **Pipeline:** report the deploy instead of blocking on it (4), Linear as the only instruction channel (5), base sync through GitHub's update-branch (7), simpler expected checks (8), no `/restart` (11)
 - **Config:** fixed branch names (9), `.gosha/instructions.md` instead of prompt overrides (10), secrets by fixed key names (12)

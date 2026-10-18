@@ -35,7 +35,7 @@ Gosha doesn't replace the project's CI/CD. It produces the changes that the exis
 ### 1.4 Principles
 
 - **Linear is the only place a human gives Gosha instructions** (ticket states + ticket comments). Linear holds only the *outcome*: Blocked and Delivered.
-- **Telegram is Gosha's activity feed** (read-only for the human): pickup, implementation, review rounds, checks, merge, deploy, usage limits, errors. It's detailed, and it's where to watch Gosha work.
+- **Telegram is for alerts** (read-only for the human): a project paused, a ticket Blocked or delivered, a usage limit, a crash, plus a daily digest. Progress is on the PR and in the logs, not repeated in Telegram.
 - **Gosha acts as itself, not as the human.** It uses its own GitHub App identity (and a Linear app identity if available), and never a person's credentials.
 - **Unattended.** Gosha runs as a background service on any always-on Unix-like host (macOS or Linux): a desktop, a home server or a VPS. Full detail is in the local logs.
 - **Host-agnostic.** Nothing in Gosha assumes a particular machine, OS, package manager or service manager.
@@ -93,7 +93,7 @@ State names default to the ones above (`Ready`, `In Progress`, `In Review`, `Blo
 
   What it reports is recorded on the run as the pipeline goes, so a delivery that resumes after a restart still has all of it.
 
-Everything else (pickup, progress, review rounds, usage limits, errors) goes to Telegram (§9).
+Progress (reviews, fixes, checks) is on the PR. Alerts (paused, Blocked, delivered, usage limits, crashes) go to Telegram (§9).
 
 ## 4. Architecture
 
@@ -107,7 +107,7 @@ gosha daemon
  │     ├── context refresher    (every 15m + before each ticket)
  │     └── ticket pipeline      (at most 1 active ticket per project)
  ├── project supervisor "avisodesk"
- ├── notifier: async Telegram queue (never blocks the pipeline)
+ ├── notifier: async Telegram queue for alerts (never blocks the pipeline)
  └── store (SQLite): runs, steps, round counters, session ids, cursors
 ```
 
@@ -121,7 +121,7 @@ internal/config/      global + project config loading and validation
 internal/linear/      GraphQL client + app OAuth: poll, transition, comment, attachment, relations
 internal/notion/      API client, block → markdown, incremental page-tree mirror (§6)
 internal/github/      GitHub REST API via go-github + ghinstallation: App auth, PRs, reviews, comments, check runs, workflow runs, merge
-internal/notify/      event types, Telegram sender, rate limiting, retries
+internal/notify/      Telegram sender, rate limiting, retries; heartbeat ping
 internal/gitx/        bare clone, fetch, ticket checkouts, merge, push (shells out to the git CLI; token injected per command, hooks off)
 internal/agent/       claude CLI runner, prompt rendering, result parsing
 internal/tmpl/        prompt data model + functions (§5.3)
@@ -157,6 +157,8 @@ github_app:                    # one app, installed on every project repo
 telegram:
   chat_id: -1001234567890      # private channel; the bot is an admin with "Post messages"
   digest_at: "09:00"           # daily digest, local time; empty disables it
+
+heartbeat_url: ""              # optional; GET after every poll, for an outside monitor (§9)
 ```
 
 **Project discovery:** the projects Gosha manages are the directories under `~/.gosha/projects/` that contain a `repo/` clone. There's no separate list to keep in sync.
@@ -236,7 +238,7 @@ Config files never contain secrets, not even references to them. Gosha reads eac
 | `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET` | Gosha's Linear OAuth app (§8.6) |
 | `NOTION_TOKEN` | the Notion integration (§6.3) |
 | `CLAUDE_CODE_OAUTH_TOKEN` | agents, from `claude setup-token` (§7) |
-| `TELEGRAM_BOT_TOKEN` | the Telegram feed (§9) |
+| `TELEGRAM_BOT_TOKEN` | Telegram alerts (§9) |
 
 - **Where values come from** (first match wins):
   1. `~/.gosha/projects/<project>/secrets.env` (optional per-project overrides, e.g. a project in a different Notion workspace)
@@ -413,7 +415,7 @@ Humans instruct Gosha only through Linear (§1.4): comments on the PR are for pe
 1. The poller lists Ready issues in the team.
 2. It skips any issue whose "blocked by" issues are not yet **In Review or Done**. (In Review means the code is already merged, so it's safe to build on.)
 3. It orders the rest by priority (Urgent first, Linear's "No priority" last), then by creation time, and takes one if the project is idle.
-4. Claim: move the ticket to In Progress, record the run, and notify Telegram.
+4. Claim: move the ticket to In Progress and record the run.
 5. Decide the mode:
    - an open Gosha PR exists → **resume**: the round limit resets; new ticket comments go to an **address** pass first, otherwise the PR gets a fresh review (§8.3)
    - the ticket's last PR was merged, by Gosha or by hand → **follow-up**: a fresh run on a new branch with suffix `-2`, `-3`, …, whose implementer is told about the earlier PR (`.FollowUp`) and that the new comments say what to change. A follow-up with no new human comment goes **Blocked** at once, asking what to change; no agent runs.
@@ -512,36 +514,25 @@ While a ticket is active, the poller re-reads its state every 30s.
 ### 8.11 Agent usage limits
 Claude's stream reports usage on every run as a `rate_limit_event` (`status`, `resetsAt`, and utilization of the five-hour and seven-day windows). A `status` other than `allowed`, or a failed result caused by the limit, means a usage limit: Gosha pauses **all** agent scheduling until `resetsAt` and then retries the same step. The ticket stays In Progress. This goes to Telegram (hit + resumed) and to the logs, never to Linear. Limit-related time doesn't count toward `agent.timeout`.
 
-## 9. Telegram activity feed
+## 9. Telegram alerts
 
-A Telegram bot posts Gosha's activity to a **private channel**. All projects share the channel, and every message starts with the project name.
+A Telegram bot posts **alerts** to a **private channel**: things a human may need to act on. All projects share the channel, and every message starts with the project name. Progress (pickup, reviews, fixes, checks, merge) is on the PR and in the logs, not repeated here.
 
-**Events:**
+**Alerts:**
 
-| Event | Example |
+| Alert | Example |
 |---|---|
-| daemon started / stopped | `gosha v0.3.0 started · 2 projects` |
-| project error / paused | `nextdesk · paused at a1b2c3d: .gosha/config.yaml: linear.team: required` (config, Linear team/states, Notion access) |
-| project recovered | `nextdesk · checks pass again at a1b2c3d · resumed` |
-| picked up | `nextdesk · NXT-12 Add login · picked up (fresh)` |
-| context refreshed | `nextdesk · context · 1 added, 3 updated` (only when something changed) |
-| implementation done | `NXT-12 · implemented · +210 −35 in 7 files · 14m` + summary |
-| PR opened | link |
-| review round N | `NXT-12 · review 1/3 ❌ · 2 must, 3 should` |
-| address pass | `NXT-12 · addressed 5 comments` |
-| checks | `NXT-12 · checks ✅ 4/4` / `❌ test (go 1.27)` → fixing 1/3 |
-| merged | `NXT-12 · squash-merged a1b2c3d` |
-| deploy | `NXT-12 · deploy ✅ https://…` / `deploy ❌ failure` |
-| delivered / blocked | the outcome + a link to the Linear ticket |
+| project paused / recovered | `nextdesk · paused at a1b2c3d: .gosha/config.yaml: linear.team: required` (config, secrets, Linear team/states, Notion access) / `nextdesk · checks pass again at a1b2c3d · resumed` |
+| blocked | `NXT-12 · ⛔ blocked while reviewing: …` + links to the ticket and PR |
+| delivered | `NXT-12 · ✅ delivered · In Review` (with `· deploy ❌ failure` when the deploy failed) + links |
 | usage limit | `⏸ Claude usage limit, resuming ~14:30` / `▶️ resumed` |
-| paused / canceled by human | `NXT-12 · moved to Backlog, stopped` |
+| crash | `💥 crashed: …`, then the process exits |
 | daily digest | `09:00 · yesterday: 4 delivered, 1 blocked · queue: 3 Ready` |
 
 **Rules:**
-- Events go through an async queue, so a Telegram outage never blocks or fails delivery. Sending retries with backoff, respects Telegram rate limits, and drops events after ~1h.
-- Messages use HTML formatting, with links to the Linear ticket and PR.
-- Messages are kept short for phone reading, and long agent summaries are truncated.
-- **Daily digest:** Gosha can't report that it has died, so if the digest doesn't arrive, check the host.
+- Alerts go through an async queue, so a Telegram outage never blocks or fails delivery. Sending retries with backoff, respects Telegram rate limits, and drops alerts after ~1h.
+- Messages use HTML formatting, with links to the Linear ticket and PR, and are kept short for phone reading.
+- **Liveness:** Gosha can't report that it has died. With `heartbeat_url` set (§5.1), it GETs that URL after every poll, so a dead-man's-switch monitor (e.g. a healthchecks service) alerts when the pings stop. The daily digest is a summary, not a liveness signal.
 - Telegram is **output only**. Gosha takes instructions only from Linear.
 
 ## 10. Persistence & recovery
@@ -654,7 +645,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - `gosha context refresh <project>`: pull the latest from the context source (Notion) into the local mirror
 - `gosha context path <project>`: print where the mirror lives
 - `gosha context show <project>`: print `INDEX.md`, the page tree the agent starts from
-- `gosha run <project> [--once] [--ticket NXT-12] [--dry-run]`: foreground loop for one project, for development and prompt tuning. `--once` handles a single ticket. `--dry-run` does a single pickup pass and reports what would happen (pickup, queue, skipped tickets and why, mode, branch) to stdout and Telegram, without changing anything in Linear or GitHub.
+- `gosha run <project> [--once] [--ticket NXT-12] [--dry-run]`: foreground loop for one project, for development and prompt tuning. `--once` handles a single ticket. `--dry-run` does a single pickup pass and prints what would happen (pickup, queue, skipped tickets and why, mode, branch), without changing anything in Linear or GitHub or posting to Telegram.
 - `gosha secrets edit`: opens `secrets.env` in `$EDITOR`
 - `gosha service install|uninstall|start|stop|restart|status`
 - `gosha daemon`
@@ -697,8 +688,8 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - All project config lives in the repo's `.gosha/`. The global config is machine-level only; projects are discovered from `~/.gosha/projects/`.
 - A single home directory `~/.gosha`, with a `projects/<name>/` folder per project.
 - Project config is read from `origin/<default>` in a bare clone, with no local copy. An invalid or missing config pauses the project (fail closed).
-- Telegram is the detailed activity feed, posted to a private channel. Linear only gets the PR attachment plus the Blocked and Delivered comments.
-- Daily digest at 09:00 (configurable, can be disabled). It also serves as the sign that Gosha is still running.
+- Telegram is for alerts only (paused, Blocked, delivered, usage limit, crash, daily digest), posted to a private channel. Linear only gets the PR attachment plus the Blocked and Delivered comments. (M7; until then, Telegram was a detailed activity feed.)
+- Daily digest at 09:00 (configurable, can be disabled), as a summary. Liveness is an optional heartbeat URL ping instead. (M7)
 - Ticket checkouts are self-contained local clones, never linked worktrees, and Gosha never runs git inside one after an agent has used it: the work is collected by fetching from the bare clone. (M2)
 - Sandbox layout: agents only work in `~/.gosha/workspaces/`. The OS sandbox denies `~/.gosha` and re-allows the ticket's workspace; permission rules deny every other top-level entry, because a permission deny beats any allow. (M2, simplified in M7)
 - Gosha runs no repo-defined commands outside the sandbox: there's no `agent.setup`, and agents install dependencies themselves. (M7)

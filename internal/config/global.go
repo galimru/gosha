@@ -13,6 +13,9 @@ type Global struct {
 	Agent       GlobalAgent `yaml:"agent"`
 	GitHubApp   GitHubApp   `yaml:"github_app"`
 	Telegram    Telegram    `yaml:"telegram"`
+	// HeartbeatURL is GET-pinged after every poll, so an outside monitor
+	// notices when Gosha stops (DESIGN §9). Optional.
+	HeartbeatURL string `yaml:"heartbeat_url"`
 }
 
 type GlobalAgent struct {

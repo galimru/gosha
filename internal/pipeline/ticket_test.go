@@ -395,11 +395,9 @@ func TestTicketToPR(t *testing.T) {
 		h.prs.reviews[0].comments[0].Body != "**nit:** name" {
 		t.Errorf("reviews = %+v", h.prs.reviews)
 	}
-	ev := strings.Join(h.events.take(), "\n")
-	for _, want := range []string{"picked up (fresh)", "implemented · +1 −0 in 1 files", "PR #1 opened", "review 1/3 ✅ · 0 must, 0 should, 1 nit"} {
-		if !strings.Contains(ev, want) {
-			t.Errorf("events missing %q:\n%s", want, ev)
-		}
+	// Progress isn't an alert: Telegram stays quiet until the outcome.
+	if ev := h.events.take(); len(ev) != 0 {
+		t.Errorf("events = %q", ev)
 	}
 }
 

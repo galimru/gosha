@@ -1,5 +1,5 @@
-// Package notify posts Gosha's activity feed to a Telegram channel
-// (DESIGN §9). Sending is asynchronous and never blocks the pipeline.
+// Package notify posts Gosha's alerts to a Telegram channel (DESIGN §9).
+// Sending is asynchronous and never blocks the pipeline.
 package notify
 
 import (
