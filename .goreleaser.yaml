@@ -20,8 +20,7 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# GitHub writes the notes from the merged pull requests: one line per PR,
+# with no commit hashes or author emails.
 changelog:
-  use: github
-  sort: asc
-  filters:
-    exclude: ["^docs", "^test", "^ci", "^chore", "^build"]
+  use: github-native
