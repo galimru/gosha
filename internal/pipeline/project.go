@@ -123,6 +123,13 @@ func (e *Env) readConfig(ctx context.Context, p *Project) error {
 	if err != nil {
 		return e.pause(ctx, p, err)
 	}
+	if wf := cfg.Deploy.Workflow; wf != "" {
+		if _, err := p.Repo.Show(ctx, p.Commit, ".github/workflows/"+wf); errors.Is(err, gitx.ErrNotFound) {
+			warns = append(warns, fmt.Sprintf("deploy.workflow: .github/workflows/%s isn't on the default branch, so no deploy will be found", wf))
+		} else if err != nil {
+			return fmt.Errorf("%s: %w", p.Name, err)
+		}
+	}
 	p.Config, p.Warnings = cfg, warns
 	if cfg.GitHub.DefaultBranch != "" {
 		p.Base = cfg.GitHub.DefaultBranch

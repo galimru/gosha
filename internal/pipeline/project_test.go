@@ -158,6 +158,11 @@ func TestReadConfigFailClosed(t *testing.T) {
 	if ev := rec.take(); len(ev) != 1 || !strings.Contains(ev[0], "resumed") {
 		t.Errorf("resume events = %v", ev)
 	}
+	// A deploy workflow that isn't in the repo is a warning, not a pause.
+	p, err = step(valid + "deploy:\n  workflow: deploy.yml\n")
+	if err != nil || len(p.Warnings) != 1 || !strings.Contains(p.Warnings[0], ".github/workflows/deploy.yml isn't on the default branch") {
+		t.Errorf("warnings = %v, %v", p.Warnings, err)
+	}
 }
 
 func TestPauseReasonRedacted(t *testing.T) {

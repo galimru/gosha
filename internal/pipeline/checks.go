@@ -50,10 +50,13 @@ func (t *ticket) checks(ctx context.Context) error {
 	}
 	if res.ok() {
 		t.run.CheckedSHA, t.run.ChecksResult = head, ""
+		t.report.Checks = nil
+		for _, c := range res.checks {
+			t.report.Checks = append(t.report.Checks, c.Name)
+		}
 		if err := t.save(ctx, StepChecks); err != nil {
 			return err
 		}
-		t.passed = res.checks
 		msg := fmt.Sprintf("%s · checks ✅ %d/%d", t.issue.Identifier, len(res.checks), len(res.checks))
 		if len(res.checks) == 0 {
 			msg = fmt.Sprintf("%s · no checks expected", t.issue.Identifier)
@@ -74,6 +77,7 @@ func (t *ticket) checks(ctx context.Context) error {
 			limit, codeList(names), checkLinks(res)), nil)
 	}
 	fb := tmpl.Feedback{CI: t.ciFeedback(ctx, res)}
+	t.report.Fixes = append(t.report.Fixes, fmt.Sprintf("Checks failed: %s → fixed by the implementer", codeList(names)))
 	if err := t.recordFailure(ctx, head, fb); err != nil {
 		return err
 	}

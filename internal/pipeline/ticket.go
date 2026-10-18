@@ -32,15 +32,16 @@ const (
 	StepFix       = "fix"
 	StepSync      = "sync"
 	StepMerge     = "merge"
+	StepDeploy    = "deploy"
 	StepBlocked   = "blocked"
 )
 
 // Run outcomes for runs that end without delivering.
 const (
 	OutcomeRestarted = "restarted"
-	OutcomeMerged    = "merged by hand"
+	OutcomeMerged    = store.OutcomeMerged
 	// OutcomeDelivered is a run Gosha merged and reported In Review.
-	OutcomeDelivered = "delivered"
+	OutcomeDelivered = store.OutcomeDelivered
 )
 
 // ModeFollowUp is a fresh run on a ticket whose earlier PR was merged.
@@ -55,6 +56,7 @@ type issueOps interface {
 	Transition(ctx context.Context, issueID, stateID string) error
 	CreateComment(ctx context.Context, issueID, body string) (string, error)
 	CreateAttachment(ctx context.Context, issueID, link, title, subtitle string) error
+	Comments(ctx context.Context, issueID string) ([]linear.Comment, error)
 }
 
 // prOps is the GitHub surface a ticket run uses.
@@ -69,6 +71,8 @@ type prOps interface {
 	Checks(ctx context.Context, sha string) ([]github.Check, error)
 	JobLog(ctx context.Context, jobID int64) (string, error)
 	Merge(ctx context.Context, number int, sha, method, title, message string) (string, error)
+	DeployRun(ctx context.Context, workflow, sha, branch string) (*github.WorkflowRun, error)
+	RunJobs(ctx context.Context, runID int64) ([]github.Job, error)
 }
 
 // ticket is one pickup of one ticket.
@@ -90,9 +94,16 @@ type ticket struct {
 	cursor  *store.Cursor
 	run     *store.Run
 	started time.Time
+	// prev is the ticket's last run whose PR was merged: what a follow-up
+	// builds on.
+	prev *store.Run
+	// report is what the Delivered comment will say, kept on the run.
+	report *delivery
 	// fromReady is set when a human moved the ticket to Ready, as opposed
 	// to an interrupted run continuing: it resets the round limits.
 	fromReady bool
+	// resuming is set when the pickup continues an open run.
+	resuming bool
 	// budget is what's left of agent.timeout in this pickup. Agent passes
 	// and agent.setup spend it; waiting for CI doesn't.
 	budget time.Duration
@@ -101,11 +112,6 @@ type ticket struct {
 	// recheck is set when the next review is of a fix for failed checks or
 	// conflicts: approving it doesn't use up a review round.
 	recheck bool
-	// For the Delivered comment: the implementer's summary, the checks that
-	// passed and the merged diff, when this pickup saw them.
-	summary string
-	passed  []github.Check
-	diff    *gitx.DiffStat
 }
 
 // agentPass starts an agent pass (or agent.setup) bounded by what's left of
@@ -200,6 +206,9 @@ func (e *Env) interrupted(ctx context.Context, name string, lin *Linear, only st
 			continue
 		}
 		c := Candidate{Issue: *is, OpenRun: r}
+		if c.Delivered, err = e.Store.LastDelivered(ctx, name, r.TicketID); err != nil {
+			return nil, err
+		}
 		cur, err := e.Store.CommentCursor(ctx, name, r.TicketID)
 		if err != nil {
 			return nil, err
@@ -237,8 +246,11 @@ func (e *Env) botIdentity(ctx context.Context, inst *github.Installation) (agent
 // ticket In Progress and the run resumable.
 func (e *Env) handle(ctx context.Context, p *Project, st *linear.States, is issueOps, prs prOps, bot agent.Identity, kb tmpl.Context, c Candidate) error {
 	t := &ticket{e: e, p: p, states: st, issues: is, prs: prs, bot: bot, kb: kb,
-		issue: c.Issue, comments: c.NewComments, run: c.OpenRun, started: time.Now(),
-		fromReady: c.Issue.State.ID != st.InProgress.ID, budget: p.Config.Agent.Timeout}
+		issue: c.Issue, comments: c.NewComments, run: c.OpenRun, prev: c.Delivered, report: &delivery{}, started: time.Now(),
+		fromReady: c.Issue.State.ID != st.InProgress.ID, resuming: c.OpenRun != nil, budget: p.Config.Agent.Timeout}
+	if t.run != nil {
+		t.report = loadReport(t.run)
+	}
 	if err := t.claim(ctx, c.Comments); err != nil {
 		return err
 	}
@@ -272,6 +284,8 @@ func (t *ticket) claim(ctx context.Context, all []linear.Comment) error {
 		mode = ModeRestart
 	case t.run != nil:
 		mode = ModeResume
+	case t.prev != nil:
+		mode = ModeFollowUp
 	}
 	if t.run == nil {
 		t.run = &store.Run{Project: t.p.Name, TicketID: t.issue.Identifier, Mode: mode, Step: StepClaimed, BaseBranch: t.p.Base}
@@ -279,8 +293,13 @@ func (t *ticket) claim(ctx context.Context, all []linear.Comment) error {
 			return err
 		}
 	} else {
-		t.run.Mode = mode
-		if err := t.e.Store.UpdateRun(ctx, t.run); err != nil {
+		// A follow-up stays one when it resumes, so it keeps its prompt.
+		if t.run.Mode != ModeFollowUp || mode == ModeRestart {
+			t.run.Mode = mode
+		}
+		// A restart never continues the old session.
+		t.resuming = mode != ModeRestart
+		if err := t.save(ctx, t.run.Step); err != nil {
 			return err
 		}
 	}
@@ -314,13 +333,25 @@ func (t *ticket) drive(ctx context.Context) error {
 			return err
 		}
 		switch {
+		case pr.Merged && t.run.MergeSHA != "" && t.fromReady && len(instructions(t.comments)) > 0:
+			// Blocked after the merge (its deploy failed), and a human asked
+			// for a change: that's a follow-up on the merged code.
+			if err := t.e.Store.FinishRun(ctx, t.run.ID, OutcomeDelivered); err != nil {
+				return err
+			}
+			t.prev = t.run
+			if err := t.newRun(ctx, ModeFollowUp); err != nil {
+				return err
+			}
 		case pr.Merged && t.run.MergeSHA != "":
-			// Gosha merged it and stopped before reporting.
-			return t.deliver(ctx)
+			// Gosha merged it and stopped before delivering, or its deploy
+			// is to be checked again.
+			return t.afterMerge(ctx)
 		case pr.Merged:
 			if err := t.e.Store.FinishRun(ctx, t.run.ID, OutcomeMerged); err != nil {
 				return err
 			}
+			t.prev = t.run
 			if err := t.newRun(ctx, ModeFollowUp); err != nil {
 				return err
 			}
@@ -336,6 +367,10 @@ func (t *ticket) drive(ctx context.Context) error {
 				return err
 			}
 		}
+	}
+	if t.run.Mode == ModeFollowUp && t.run.Branch == "" && len(instructions(t.comments)) == 0 {
+		return t.blockWith(ctx, "The ticket's earlier pull request is already merged, and there's no new comment saying what to change.", nil,
+			"comment what's wrong or what to change, then move the ticket to Ready and I'll open a follow-up pull request.")
 	}
 	if t.run.Branch == "" {
 		branch, err := t.chooseBranch(ctx, reuse)
@@ -353,6 +388,7 @@ func (t *ticket) drive(ctx context.Context) error {
 // newRun replaces the current run with a fresh one.
 func (t *ticket) newRun(ctx context.Context, mode string) error {
 	t.run = &store.Run{Project: t.p.Name, TicketID: t.issue.Identifier, Mode: mode, Step: StepClaimed, BaseBranch: t.p.Base}
+	t.report, t.resuming = &delivery{}, false
 	return t.e.Store.CreateRun(ctx, t.run)
 }
 
@@ -426,6 +462,7 @@ func (t *ticket) checkout() string {
 
 func (t *ticket) save(ctx context.Context, step string) error {
 	t.run.Step = step
+	t.run.Report = t.report.encode()
 	return t.e.Store.UpdateRun(ctx, t.run)
 }
 
@@ -449,13 +486,13 @@ func (t *ticket) implement(ctx context.Context) error {
 	resultFile := filepath.Join(rp.agent.RunDir, "result.json")
 	prompt, err := agent.RenderPrompt(ctx, t.p.Repo, t.p.Commit, "implement.md", tmpl.Data{
 		Project: t.p.Name, Ticket: Ticket(t.issue, t.comments), Context: t.kb,
-		Branch: t.run.Branch, BaseBranch: t.run.BaseBranch, ResultFile: resultFile,
+		Branch: t.run.Branch, BaseBranch: t.run.BaseBranch, ResultFile: resultFile, FollowUp: t.followUp(),
 	})
 	if err != nil {
 		return t.block(ctx, err.Error(), nil)
 	}
 	spec := t.spec(prompt, checkout, rp)
-	if t.run.Mode == ModeResume && !fresh {
+	if t.resuming && !fresh {
 		spec.Resume = t.run.ImplSession
 	}
 	res, err := t.runImplementer(ctx, spec, resultFile)
@@ -476,7 +513,6 @@ func (t *ticket) implement(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	t.summary = res.Summary
 	t.notify(fmt.Sprintf("%s · implemented · %s · %s\n%s", t.issue.Identifier, diff, time.Since(t.started).Round(time.Minute), res.Summary))
 	return t.publish(ctx, res, diff)
 }
@@ -557,7 +593,8 @@ func (t *ticket) runImplementer(ctx context.Context, spec agent.Spec, resultFile
 	if res.Status == agent.StatusBlocked {
 		return nil, t.block(ctx, res.BlockedReason, res.Questions)
 	}
-	return res, nil
+	t.report.addResult(res)
+	return res, t.save(ctx, t.run.Step)
 }
 
 // agentFailed handles a failed agent pass: a usage limit or shutdown is
@@ -595,6 +632,23 @@ func (t *ticket) collect(ctx context.Context, checkout string) (bool, error) {
 
 var errAgentTimeout = errors.New("agent.timeout reached")
 
+// newComments adds the human ticket comments posted since the pickup (or
+// the last pass) to the instructions, so a comment written while Gosha
+// works reaches the next implementer pass.
+func (t *ticket) newComments(ctx context.Context) error {
+	all, err := t.issues.Comments(ctx, t.issue.ID)
+	if err != nil {
+		return err
+	}
+	if len(all) == 0 {
+		return nil
+	}
+	t.comments = append(t.comments, NewHumanComments(all, t.cursor)...)
+	last := all[len(all)-1]
+	t.cursor = &store.Cursor{CommentID: last.ID, At: last.CreatedAt}
+	return nil
+}
+
 // consumeComments moves the comment cursor past the comments the agent has
 // now been given.
 func (t *ticket) consumeComments(ctx context.Context) error {
@@ -621,7 +675,11 @@ func (t *ticket) publish(ctx context.Context, res *agent.ImplementerResult, diff
 	if err := t.save(ctx, StepPR); err != nil {
 		return err
 	}
-	pr, err := t.prs.CreatePR(ctx, t.run.Branch, t.run.BaseBranch, t.issue.Identifier+": "+t.issue.Title, prBody(t.issue, res))
+	title := t.issue.Identifier + ": " + t.issue.Title
+	if t.run.Mode == ModeFollowUp {
+		title += " (follow-up)"
+	}
+	pr, err := t.prs.CreatePR(ctx, t.run.Branch, t.run.BaseBranch, title, prBody(t.issue, res, t.followUp()))
 	if err != nil {
 		return err
 	}
@@ -657,8 +715,11 @@ func (t *ticket) push(ctx context.Context) (bool, error) {
 	return err == nil, err
 }
 
-func prBody(is linear.Issue, res *agent.ImplementerResult) string {
+func prBody(is linear.Issue, res *agent.ImplementerResult, fu tmpl.FollowUp) string {
 	var b strings.Builder
+	if fu.PR != 0 {
+		fmt.Fprintf(&b, "Follow-up to #%d.\n\n", fu.PR)
+	}
 	b.WriteString(strings.TrimSpace(res.Summary) + "\n")
 	if v := strings.TrimSpace(res.Verification); v != "" {
 		b.WriteString("\n### Verification\n" + v + "\n")
@@ -666,6 +727,12 @@ func prBody(is linear.Issue, res *agent.ImplementerResult) string {
 	if len(res.Assumptions) > 0 {
 		b.WriteString("\n### Assumptions\n")
 		for _, a := range res.Assumptions {
+			b.WriteString("- " + a + "\n")
+		}
+	}
+	if len(res.LeftOut) > 0 {
+		b.WriteString("\n### Left out\n")
+		for _, a := range res.LeftOut {
 			b.WriteString("- " + a + "\n")
 		}
 	}

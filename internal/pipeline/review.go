@@ -121,6 +121,7 @@ func (t *ticket) review(ctx context.Context) (*agent.ReviewerResult, []github.Fe
 			return nil, nil, err
 		}
 		t.run.ReviewID, t.run.ReviewRound = id, round
+		t.report.addReview(t.roundLabel(round, limit), res)
 		if err := t.save(ctx, StepReview); err != nil {
 			return nil, nil, err
 		}
@@ -267,6 +268,9 @@ func (t *ticket) feedbackPass(ctx context.Context, round int, fb tmpl.Feedback) 
 	checkout := t.checkout()
 	fresh, rp, err := t.prepare(ctx, checkout, roleAddress)
 	if err != nil || t.run.Step == StepBlocked {
+		return nil, false, err
+	}
+	if err := t.newComments(ctx); err != nil {
 		return nil, false, err
 	}
 	resultFile := filepath.Join(rp.agent.RunDir, "result.json")

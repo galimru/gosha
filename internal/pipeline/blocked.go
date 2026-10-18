@@ -18,11 +18,22 @@ var stepNames = map[string]string{
 	StepFix:       "fixing failed checks",
 	StepSync:      "merging the base branch into the pull request",
 	StepMerge:     "merging the pull request",
+	StepDeploy:    "watching the deploy",
 }
+
+// needAnswer is what a Blocked comment asks for unless the step says
+// otherwise.
+const needAnswer = "answer in a comment, then move the ticket back to Ready and I'll continue where I stopped. " +
+	"Comment `/restart` instead to start over from scratch."
 
 // block posts the Blocked comment, moves the ticket to Blocked and keeps
 // the branch, PR and checkout so a later Ready resumes (DESIGN §8.9).
 func (t *ticket) block(ctx context.Context, reason string, questions []string) error {
+	return t.blockWith(ctx, reason, questions, needAnswer)
+}
+
+// blockWith is block with its own "What I need" (lowercase, a sentence).
+func (t *ticket) blockWith(ctx context.Context, reason string, questions []string, need string) error {
 	reason = t.e.Redactor.Redact(strings.TrimSpace(reason))
 	step := t.run.Step
 	if step == StepBlocked {
@@ -36,8 +47,7 @@ func (t *ticket) block(ctx context.Context, reason string, questions []string) e
 			b.WriteString("- " + t.e.Redactor.Redact(q) + "\n")
 		}
 	}
-	b.WriteString("\n**What I need:** answer in a comment, then move the ticket back to Ready and I'll continue where I stopped. " +
-		"Comment `/restart` instead to start over from scratch.\n")
+	b.WriteString("\n**What I need:** " + need + "\n")
 	var links []string
 	if t.run.PRURL != "" {
 		links = append(links, fmt.Sprintf("PR: %s", t.run.PRURL))

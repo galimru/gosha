@@ -63,7 +63,7 @@ func TestChecksGreenMerges(t *testing.T) {
 	if h.lin.state() != states.InReview.ID || len(h.lin.comments) != 1 {
 		t.Fatalf("linear = %+v", h.lin)
 	}
-	for _, want := range []string{"**Delivered:** [PR #1]", "+1 −0 in 1 files", "Added login.", "Checks passed: `test`", "1 round(s)"} {
+	for _, want := range []string{"**Delivered:** [PR #1]", "+1 −0 in 1 files", "Added login.", "Checks passed: `test`", "Review: review 1/3 ✅", "Verification: go test", "**Assumptions**\n- email only"} {
 		if !strings.Contains(h.lin.comments[0], want) {
 			t.Errorf("Delivered comment missing %q:\n%s", want, h.lin.comments[0])
 		}
@@ -325,7 +325,8 @@ func TestCrashAfterMerge(t *testing.T) {
 	if last.ID != r.ID || last.Outcome != OutcomeDelivered || h.lin.state() != states.InReview.ID || len(h.agent.calls) != 1 {
 		t.Errorf("run = %+v, linear %+v", last, h.lin)
 	}
-	if !strings.Contains(h.lin.comments[0], "is merged (`abc1234`)") {
+	// What the first pickup learned is still reported.
+	if !strings.Contains(h.lin.comments[0], "is merged (`abc1234`)") || !strings.Contains(h.lin.comments[0], "Added login.") {
 		t.Errorf("comment = %s", h.lin.comments[0])
 	}
 }

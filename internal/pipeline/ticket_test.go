@@ -26,6 +26,13 @@ type fakeLinear struct {
 	transitions []string
 	comments    []string
 	attachments []string
+	// ticket is the ticket's comments as Linear has them; pickup sets it,
+	// and a test can add to it while Gosha works.
+	ticket []linear.Comment
+}
+
+func (f *fakeLinear) Comments(context.Context, string) ([]linear.Comment, error) {
+	return f.ticket, nil
 }
 
 func (f *fakeLinear) Transition(_ context.Context, _, stateID string) error {
@@ -67,7 +74,24 @@ type fakePRs struct {
 	logs       map[int64]string
 	merged     []mergeCall
 	mergeErr   error
+	// deploys returns the deploy run for each call (none if nil), and jobs
+	// a run's jobs.
+	deploys     func(call int, sha string) *github.WorkflowRun
+	deployCalls int
+	jobs        []github.Job
+	// titles and bodies of the PRs opened.
+	titles, bodies []string
 }
+
+func (f *fakePRs) DeployRun(_ context.Context, _, sha, _ string) (*github.WorkflowRun, error) {
+	f.deployCalls++
+	if f.deploys == nil {
+		return nil, nil
+	}
+	return f.deploys(f.deployCalls, sha), nil
+}
+
+func (f *fakePRs) RunJobs(context.Context, int64) ([]github.Job, error) { return f.jobs, nil }
 
 type mergeCall struct {
 	number             int
@@ -137,6 +161,7 @@ func (f *fakePRs) PR(_ context.Context, n int) (*github.PR, error) {
 }
 
 func (f *fakePRs) CreatePR(_ context.Context, branch, base, title, body string) (*github.PR, error) {
+	f.titles, f.bodies = append(f.titles, title), append(f.bodies, body)
 	n := len(f.prs) + 1
 	p := &github.PR{Number: n, URL: fmt.Sprintf("https://github.com/o/r/pull/%d", n), State: "open"}
 	f.prs[n] = p
@@ -281,8 +306,13 @@ func (h *harness) pickup(comments ...linear.Comment) error {
 	if err != nil {
 		h.t.Fatal(err)
 	}
+	delivered, err := h.env.Store.LastDelivered(h.ctx, "demo", h.issue.Identifier)
+	if err != nil {
+		h.t.Fatal(err)
+	}
 	cur, _ := h.env.Store.CommentCursor(h.ctx, "demo", h.issue.Identifier)
-	c := Candidate{Issue: h.issue, Comments: comments, NewComments: NewHumanComments(comments, cur), OpenRun: run}
+	h.lin.ticket = comments
+	c := Candidate{Issue: h.issue, Comments: comments, NewComments: NewHumanComments(comments, cur), OpenRun: run, Delivered: delivered}
 	ctx, cancel := context.WithCancel(h.ctx)
 	defer cancel()
 	h.prs.stop, h.prs.stopped = cancel, false
