@@ -1,5 +1,5 @@
-// Package tmpl holds the template data model and functions shared by every
-// Gosha template: prompts and the branch name pattern (DESIGN §5.3).
+// Package tmpl holds the data model and functions of the agent prompts
+// (DESIGN §5.3).
 package tmpl
 
 import (
@@ -26,8 +26,6 @@ type Data struct {
 
 type Ticket struct {
 	ID          string
-	Team        string
-	Number      int
 	Title       string
 	Description string
 	URL         string

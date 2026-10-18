@@ -4,12 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
-	"strings"
 	"time"
 
-	"github.com/galimru/gosha/internal/gitx"
 	"github.com/galimru/gosha/internal/notion"
-	"github.com/galimru/gosha/internal/tmpl"
 )
 
 // ProjectFile is where a project's config lives in its repo (DESIGN §5.2).
@@ -52,7 +49,6 @@ type Notion struct {
 type GitHub struct {
 	DefaultBranch string `yaml:"default_branch"`
 	MergeMethod   string `yaml:"merge_method" default:"squash"`
-	Branch        string `yaml:"branch" default:"gosha/{{.Ticket.ID}}-{{.Ticket.Title | slug}}"`
 }
 
 type Review struct {
@@ -78,9 +74,6 @@ type ProjectAgent struct {
 	Setup          []string      `yaml:"setup"`
 	PermissionMode string        `yaml:"permission_mode" default:"dontask"`
 }
-
-// SampleTicket is what `validate` renders the branch pattern against.
-var SampleTicket = tmpl.Ticket{ID: "NXT-12", Team: "NXT", Number: 12, Title: "Add login"}
 
 // ParseProject decodes and validates a project config read from commit.
 // It returns warnings that don't stop the project.
@@ -134,31 +127,12 @@ func ParseProject(data []byte, commit string) (*Project, []string, error) {
 	if _, err := notion.ParsePageID(p.Notion.RootPage); err != nil {
 		return nil, nil, fe("notion.root_page", "must be a Notion page URL or id")
 	}
-	if _, err := p.BranchName(SampleTicket); err != nil {
-		return nil, nil, fe("github.branch", err.Error())
-	}
 
 	var warns []string
-	if !strings.Contains(p.GitHub.Branch, ".Ticket.ID") {
-		warns = append(warns, "github.branch doesn't include .Ticket.ID: Linear's GitHub integration won't auto-link branches")
-	}
 	if p.Agent.PermissionMode == "bypass" {
 		warns = append(warns, "agent.permission_mode is bypass: file tools can write anywhere the service user can")
 	}
 	return p, warns, nil
-}
-
-// BranchName renders the branch pattern for a ticket and checks the result
-// is a valid git branch name.
-func (p *Project) BranchName(t tmpl.Ticket) (string, error) {
-	name, err := tmpl.Render("github.branch", p.GitHub.Branch, tmpl.Data{Project: p.Name, Ticket: t})
-	if err != nil {
-		return "", err
-	}
-	if err := gitx.CheckBranchName(name); err != nil {
-		return "", err
-	}
-	return name, nil
 }
 
 func setDefault[T comparable](v *T, def T) {

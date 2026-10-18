@@ -132,3 +132,11 @@ skipped: NXT-14 · blocked by NXT-9 (In Progress)`
 		t.Errorf("empty report = %q", got)
 	}
 }
+
+func TestBranchName(t *testing.T) {
+	for title, want := range map[string]string{"Add login": "gosha/NXT-12-add-login", "🔐": "gosha/NXT-12"} {
+		if got := branchName(linear.Issue{Identifier: "NXT-12", Title: title}); got != want {
+			t.Errorf("branchName(%q) = %q, want %q", title, got, want)
+		}
+	}
+}

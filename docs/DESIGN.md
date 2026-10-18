@@ -125,7 +125,7 @@ internal/github/      GitHub REST API via go-github + ghinstallation: App auth, 
 internal/notify/      event types, Telegram sender, rate limiting, retries
 internal/gitx/        bare clone, fetch, ticket checkouts, merge, push (shells out to the git CLI; token injected per command, hooks off)
 internal/agent/       claude CLI runner, prompt rendering, result parsing
-internal/tmpl/        template data model + functions shared by prompts and the branch pattern (§5.3)
+internal/tmpl/        prompt template data model + functions (§5.3)
 internal/pipeline/    per-ticket state machine, limits, recovery
 internal/store/       SQLite persistence
 internal/daemon/      supervisors, scheduler, graceful shutdown
@@ -196,7 +196,6 @@ notion:
 github:
   default_branch: main         # optional, autodetected
   merge_method: squash
-  branch: "gosha/{{.Ticket.ID}}-{{.Ticket.Title | slug}}"   # optional; this is the default (§8.2)
 
 review:
   max_rounds: 3                # reviewer ⇄ implementer rounds before Blocked
@@ -229,14 +228,12 @@ agent:
 
 The binary embeds default templates, and any file present in the repo overrides its default.
 
-**Template data model.** Every Gosha template (the prompts and the branch name pattern) uses the same Go `text/template` data and functions, so a field means the same thing everywhere.
+**Template data model.** Every prompt uses the same Go `text/template` data and functions, so a field means the same thing everywhere.
 
 | Field | Example | Available in |
 |---|---|---|
 | `.Project` | `nextdesk` | all |
 | `.Ticket.ID` | `NXT-12` | all |
-| `.Ticket.Team` | `NXT` | all |
-| `.Ticket.Number` | `12` | all |
 | `.Ticket.Title` | `Add login` | all |
 | `.Ticket.Description` | markdown | prompts |
 | `.Ticket.URL` | Linear link | prompts |
@@ -462,11 +459,8 @@ All of them go through the same **address** step (`address.md`, data in `.Feedba
 
 **Comment cursor:** the ticket's comment cursor moves past the new human comments only once the implementer has actually been given them, so an interrupted pass (usage limit, shutdown) doesn't lose instructions.
 
-**Branch naming.** `github.branch` is a template using the shared data model (§5.3):
-- **Default:** `gosha/{{.Ticket.ID}}-{{.Ticket.Title | slug}}` → `gosha/NXT-12-add-login`.
-- **Example:** `feature/{{.Ticket.ID | lower}}-{{.Ticket.Title | slug}}` → `feature/nxt-12-add-login`.
-- **Validation:** `gosha validate` renders the pattern against a sample ticket. The result must be a valid git ref. Including the ticket ID is *recommended, not required*: without it, `validate` only warns that Linear's GitHub integration won't auto-link branches. Gosha links the PR to the ticket itself anyway (step 6 above).
-- **The name is used only when the branch is created.** Gosha stores the branch and PR number in `gosha.db`, and every later step uses that record, never a lookup by name, so any pattern is safe, including ones without a `gosha/` prefix.
+**Branch naming.** Always `gosha/<ID>-<slug of the title>`, e.g. `gosha/NXT-12-add-login` (`slug`, §5.3). The ticket ID lets Linear's GitHub integration link the branch.
+- **The name is used only when the branch is created.** Gosha stores the branch and PR number in `gosha.db`, and every later step uses that record, never a lookup by name.
 - **Suffixes:** follow-up runs on the same ticket, and names that already exist on the remote without being Gosha's, get `-2`, `-3`, … appended. Gosha never overwrites a branch it doesn't own.
 
 ### 8.3 Review loop (at most `review.max_rounds`)
@@ -721,7 +715,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - Notion mirror: page tree → file tree (`README.md` for pages with children, `INDEX.md` map). Databases aren't mirrored for now.
 - Host-agnostic: macOS and Linux. Gosha runs as an existing regular user (the installing user by default) and refuses root; it never creates OS accounts. `gosha service install|uninstall|start|stop|restart|status` manages the systemd or launchd unit.
 - Module path: `github.com/galimru/gosha`.
-- One template data model (`.Ticket.*`, `.Context.*`, …) shared by prompts and the branch pattern. The default branch is `gosha/{{.Ticket.ID}}-{{.Ticket.Title | slug}}`. Any pattern is allowed: names are only used when a branch is created, and branches are tracked through `gosha.db`.
+- One template data model (`.Ticket.*`, `.Context.*`, …) shared by every prompt. Branches are always `gosha/<ID>-<slug>`, with no pattern to configure; they're tracked through `gosha.db`. (M7)
 - GitHub through its API from Go (go-github); git through the `git` CLI; no `gh` dependency.
 - Secrets are read by fixed key names from `projects/<project>/secrets.env`, then `secrets.env`, then the environment. Config files hold no secrets and no references to them. (M7)
 - All project config lives in the repo's `.gosha/`. The global config is machine-level only; projects are discovered from `~/.gosha/projects/`.

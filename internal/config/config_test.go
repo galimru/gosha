@@ -36,9 +36,6 @@ func TestProjectDefaults(t *testing.T) {
 	if p.Agent.PermissionMode != "dontask" || p.GitHub.MergeMethod != "squash" {
 		t.Errorf("mode defaults: %+v %+v", p.Agent, p.GitHub)
 	}
-	if b, _ := p.BranchName(SampleTicket); b != "gosha/NXT-12-add-login" {
-		t.Errorf("branch = %q", b)
-	}
 }
 
 func TestProjectStateOverrideSubset(t *testing.T) {
@@ -65,14 +62,6 @@ func TestProjectErrors(t *testing.T) {
 		"missing team": {
 			src:   strings.Replace(minimalProject, "team: NXT", "team: \"\"", 1),
 			field: "linear.team", msg: "required",
-		},
-		"bad branch": {
-			src:   minimalProject + "github:\n  branch: \"gosha/{{.Ticket.Title}}\"\n",
-			field: "github.branch", msg: "cannot contain ' '",
-		},
-		"bad branch field": {
-			src:   minimalProject + "github:\n  branch: \"{{.Ticket.Nope}}\"\n",
-			field: "github.branch", msg: "Nope",
 		},
 		"bad permission mode": {
 			src:   minimalProject + "agent:\n  permission_mode: yolo\n",
@@ -104,12 +93,12 @@ func TestProjectErrors(t *testing.T) {
 }
 
 func TestProjectWarnings(t *testing.T) {
-	src := minimalProject + "github:\n  branch: \"bot/{{.Ticket.Title | slug}}\"\nagent:\n  permission_mode: bypass\n"
+	src := minimalProject + "agent:\n  permission_mode: bypass\n"
 	_, warns, err := ParseProject([]byte(src), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(warns) != 2 {
+	if len(warns) != 1 {
 		t.Errorf("warnings = %v", warns)
 	}
 }

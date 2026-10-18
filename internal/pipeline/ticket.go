@@ -418,7 +418,7 @@ func (t *ticket) restart(ctx context.Context, r *store.Run) error {
 	return t.e.Store.FinishRun(ctx, r.ID, OutcomeRestarted)
 }
 
-// chooseBranch renders the branch pattern and adds -2, -3, … while the
+// chooseBranch takes the ticket's branch name and adds -2, -3, … while the
 // name is taken, on GitHub or by an earlier run: Gosha never takes over a
 // branch it doesn't own (DESIGN §8.2). reuse is a name this run may take
 // back because it just deleted it.
@@ -426,10 +426,7 @@ func (t *ticket) chooseBranch(ctx context.Context, reuse string) (string, error)
 	if reuse != "" {
 		return reuse, nil
 	}
-	name, err := t.p.Config.BranchName(Ticket(t.issue, nil))
-	if err != nil {
-		return "", err
-	}
+	name := branchName(t.issue)
 	owned, err := t.e.Store.Branches(ctx, t.p.Name)
 	if err != nil {
 		return "", err

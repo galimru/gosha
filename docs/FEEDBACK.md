@@ -105,14 +105,6 @@ Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejec
 
 **Change:** if `checks.required` is set, gate on those names. Otherwise, whatever appears within `start_grace` must pass, and nothing appearing counts as a pass.
 
-## 9. Hardcoded branch names
-
-**Status:** agreed
-
-**Today (§5.2, §8.2):** `github.branch` is a template with functions, validation against a sample ticket and a warning for patterns without the ticket ID.
-
-**Change:** always `gosha/<ID>-<slug>`. Drop `.Ticket.Team` and `.Ticket.Number` if nothing else uses them.
-
 ## 10. Extra instructions instead of prompt overrides
 
 **Status:** agreed

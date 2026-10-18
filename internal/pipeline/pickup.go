@@ -119,11 +119,16 @@ func mode(p *config.Project, c Candidate) (mode, branch string) {
 	case c.Delivered != nil:
 		m = ModeFollowUp
 	}
-	branch, err := p.BranchName(Ticket(c.Issue, nil))
-	if err != nil {
-		branch = "(invalid branch name: " + err.Error() + ")"
+	return m, branchName(c.Issue)
+}
+
+// branchName is the ticket's branch, before any -2, -3 suffix (DESIGN §8.2).
+func branchName(is linear.Issue) string {
+	name := "gosha/" + is.Identifier
+	if s := tmpl.Slug(is.Title, tmpl.SlugMax); s != "" {
+		name += "-" + s
 	}
-	return m, branch
+	return name
 }
 
 // HasRestart reports a /restart command on a line of its own.
@@ -170,11 +175,7 @@ func NewHumanComments(cs []linear.Comment, cur *store.Cursor) []linear.Comment {
 
 // Ticket converts an issue to the template data model.
 func Ticket(is linear.Issue, comments []linear.Comment) tmpl.Ticket {
-	team, _, _ := strings.Cut(is.Identifier, "-")
-	t := tmpl.Ticket{
-		ID: is.Identifier, Team: team, Number: is.Number, Title: is.Title,
-		Description: is.Description, URL: is.URL,
-	}
+	t := tmpl.Ticket{ID: is.Identifier, Title: is.Title, Description: is.Description, URL: is.URL}
 	for _, c := range instructions(comments) {
 		t.Comments = append(t.Comments, tmpl.Comment{Author: c.Author, Body: c.Body})
 	}
