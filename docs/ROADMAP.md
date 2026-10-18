@@ -64,6 +64,16 @@ Changes from the plan: the ticket "worktree" is a self-contained local clone (DE
 
 ## M3 — Review loop
 
+**Status: built** (2026-10-18), pending the end-to-end check below on a real project. Behaviour that is specific to M3, until checks and merge exist:
+- **After the reviewer approves,** the run parks at step `checks` and the ticket stays In Progress. A parked run doesn't keep the project busy, so the next Ready ticket is picked up. Runs that M2 parked at `review` are active again, so their PRs get reviewed on the first pass after the upgrade.
+- **Parked runs aren't watched.** Human PR comments are collected before every review verdict, but a comment on a PR parked at `checks` waits until the ticket is next picked up (move it to Ready) or until M4 and M7 watch open PRs.
+
+Changes from the plan:
+- **The reviewer runs in a fresh throwaway clone** of the pushed head each round (`worktrees/<ticket>-review`), with `agent.setup` run in it. Its Bash can still write there, but nothing it does reaches the implementer's checkout or the branch.
+- **The reviewer sees the previous round** (its findings and the implementer's reply) in a new session, so it checks the fixes instead of starting over.
+- **Address replies are PR comments,** and reviewer comments on lines outside the diff go into the review body instead of failing the review.
+- **`agent.timeout` is one budget per pickup,** shared by every implement, review and address pass in it.
+
 - Reviewer run (edit/write tools removed), PR review with inline comments and verdict
 - Address step (`address.md`) for reviewer and human PR comments, implementer session resume
 - `review.max_rounds`, Blocked comment
