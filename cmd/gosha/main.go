@@ -67,7 +67,7 @@ func (a *app) rootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&a.logLevel, "log-level", "info", "log level: debug, info, warn, error")
 	root.AddCommand(
 		a.addCmd(), a.removeCmd(), a.listCmd(), a.validateCmd(), a.doctorCmd(),
-		a.secretsCmd(), a.statusCmd(), a.runCmd(), a.contextCmd(),
+		a.secretsCmd(), a.statusCmd(), a.runCmd(), a.daemonCmd(), a.contextCmd(),
 	)
 	return root
 }

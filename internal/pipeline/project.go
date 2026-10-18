@@ -39,6 +39,27 @@ type Env struct {
 
 	botMu sync.Mutex
 	bot   *agent.Identity
+
+	slotsOnce sync.Once
+	slots     chan struct{}
+}
+
+// acquireSlot waits for one of the concurrency agent slots shared by every
+// project in the process.
+func (e *Env) acquireSlot(ctx context.Context) (release func(), err error) {
+	e.slotsOnce.Do(func() {
+		n := 1
+		if e.Global != nil && e.Global.Concurrency > 0 {
+			n = e.Global.Concurrency
+		}
+		e.slots = make(chan struct{}, n)
+	})
+	select {
+	case e.slots <- struct{}{}:
+		return func() { <-e.slots }, nil
+	case <-ctx.Done():
+		return nil, context.Cause(ctx)
+	}
 }
 
 func (e *Env) implement(ctx context.Context, s agent.Spec, resultFile string) (*agent.ImplementerResult, *agent.Outcome, error) {

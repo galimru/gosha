@@ -13,9 +13,9 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
 
+	"github.com/galimru/gosha/internal/flock"
 	"github.com/galimru/gosha/internal/tmpl"
 )
 
@@ -104,18 +104,7 @@ func (m *Mirror) now() time.Time {
 // lock takes the mirror's exclusive lock, so a refresh and a freeze (from
 // the pipeline or the CLI) never interleave.
 func (m *Mirror) lock() (unlock func(), err error) {
-	if err := os.MkdirAll(filepath.Dir(m.Dir), 0o700); err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(m.Dir+".lock", os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		f.Close()
-		return nil, err
-	}
-	return func() { f.Close() }, nil
+	return flock.Lock(m.Dir + ".lock")
 }
 
 func (m *Mirror) load() (*manifest, error) {

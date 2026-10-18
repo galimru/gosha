@@ -101,17 +101,23 @@ A single Go binary with a single long-running daemon that serves every project o
 
 ```
 gosha daemon
- ├── scheduler: global agent-slot semaphore (default 1)
- ├── project supervisor "nextdesk"  (goroutine, panic-isolated)
+ ├── agent slots: `concurrency` agent passes at once, across all projects
+ ├── project supervisor "nextdesk"  (goroutine, panic-isolated, holds run.lock)
  │     ├── linear poller        (every 30s)
- │     ├── context refresher    (every 15m + before each ticket)
- │     └── ticket pipeline      (at most 1 active ticket per project)
+ │     └── ticket pipeline      (at most 1 active ticket per project;
+ │                               context refreshed before each pickup)
  ├── project supervisor "avisodesk"
+ ├── project scan: every minute, starts supervisors for added projects, stops removed ones
+ ├── heartbeat ping (every 30s, if configured)
  ├── notifier: async Telegram queue for alerts (never blocks the pipeline)
  └── store (SQLite): runs, steps, round counters, session ids, cursors
 ```
 
 Why one daemon rather than one per project: Claude subscription limits and the host's CPU/RAM are shared by all projects. A single scheduler can enforce a global limit on agent runs, and there is one service and one log. If one project is broken (bad config, failing API), only that project's supervisor is affected.
+
+- **Agent slots:** a slot is held for one agent pass (implement, review, address, fix), not for a whole ticket. Waiting for CI or a deploy holds none, so another project's agent can run meanwhile. Time spent waiting for a slot doesn't count toward `agent.timeout`.
+- **One process per project:** a supervisor holds `projects/<name>/run.lock` while it runs. `gosha run` takes the same lock, so it refuses a project the daemon is running, and the daemon skips (and retries every minute) a project `gosha run` holds.
+- **Panics** are recovered per supervisor: the panic and its stack go to the log, a 💥 alert goes to Telegram, and the supervisor waits 5 minutes and polls again. The open run resumes, because every step is idempotent (§8). Only the first crash in a row alerts; after a pass that succeeds, the next crash alerts again. A ticket that panics every time holds its project until a human moves it out of Ready (e.g. to Backlog); other projects aren't affected.
 
 ### Packages
 
@@ -127,7 +133,8 @@ internal/agent/       claude CLI runner, prompt rendering, result parsing
 internal/tmpl/        prompt data model + functions (§5.3)
 internal/pipeline/    per-ticket state machine, limits, recovery
 internal/store/       SQLite persistence
-internal/daemon/      supervisors, scheduler, graceful shutdown
+internal/daemon/      supervisors, project scan, panic isolation, heartbeat, graceful shutdown
+internal/flock/       advisory file locks shared by every gosha process (run.lock, context.lock)
 ```
 
 **Tooling choices:**
@@ -158,7 +165,7 @@ telegram:
   chat_id: -1001234567890      # private channel; the bot is an admin with "Post messages"
   digest_at: "09:00"           # daily digest, local time; empty disables it
 
-heartbeat_url: ""              # optional; GET after every poll, for an outside monitor (§9)
+heartbeat_url: ""              # optional; GET every 30s, for an outside monitor (§9)
 retention: 30d                 # how long finished runs' transcripts and idle Blocked workspaces are kept (§11.3)
 ```
 
@@ -527,13 +534,13 @@ A Telegram bot posts **alerts** to a **private channel**: things a human may nee
 | blocked | `NXT-12 · ⛔ blocked while reviewing: …` + links to the ticket and PR |
 | delivered | `NXT-12 · ✅ delivered · In Review` (with `· deploy ❌ failure` when the deploy failed) + links |
 | usage limit | `⏸ Claude usage limit, resuming ~14:30` / `▶️ resumed` |
-| crash | `💥 crashed: …`, then the process exits |
+| crash | `💥 crashed: … · retrying every 5m0s` (once until a pass succeeds, §4) |
 | daily digest | `09:00 · yesterday: 4 delivered, 1 blocked · queue: 3 Ready` |
 
 **Rules:**
 - Alerts go through an async queue, so a Telegram outage never blocks or fails delivery. Sending retries with backoff, respects Telegram rate limits, and drops alerts after ~1h.
 - Messages use HTML formatting, with links to the Linear ticket and PR, and are kept short for phone reading.
-- **Liveness:** Gosha can't report that it has died. With `heartbeat_url` set (§5.1), it GETs that URL after every poll, so a dead-man's-switch monitor (e.g. a healthchecks service) alerts when the pings stop. The daily digest is a summary, not a liveness signal.
+- **Liveness:** Gosha can't report that it has died. With `heartbeat_url` set (§5.1), the daemon GETs that URL every 30s while it runs, so a dead-man's-switch monitor (e.g. a healthchecks service) alerts when the pings stop. The daily digest is a summary, not a liveness signal.
 - Telegram is **output only**. Gosha takes instructions only from Linear.
 
 ## 10. Persistence & recovery
@@ -664,12 +671,12 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - `gosha context refresh <project>`: pull the latest from the context source (Notion) into the local mirror
 - `gosha context path <project>`: print where the mirror lives
 - `gosha context show <project>`: print `INDEX.md`, the page tree the agent starts from
-- `gosha run <project> [--once] [--ticket NXT-12] [--dry-run]`: foreground loop for one project, for development and prompt tuning. `--once` handles a single ticket. `--dry-run` does a single pickup pass and prints what would happen (pickup, queue, skipped tickets and why, mode, branch), without changing anything in Linear or GitHub or posting to Telegram.
+- `gosha run <project> [--once] [--ticket NXT-12] [--dry-run]`: foreground loop for one project, for development and prompt tuning. It takes the project's run lock, so it refuses a project the daemon is running. `--once` handles a single ticket. `--dry-run` does a single pickup pass and prints what would happen (pickup, queue, skipped tickets and why, mode, branch), without changing anything in Linear or GitHub or posting to Telegram.
 - `gosha secrets edit`: opens `secrets.env` in `$EDITOR`
 - `gosha service install|uninstall|start|stop|restart|status`
 - `gosha prune [project] [--dry-run] [--older-than 7d]`: apply the cleanup rules now (§11.3). `--dry-run` lists what would be removed and how much space it frees; `--older-than` overrides `retention` for this run.
 - `gosha upgrade [--check] [--version v0.x.y]`: replace the binary with a release and restart the service (§11.4)
-- `gosha daemon`
+- `gosha daemon`: every registered project, in the foreground (what the service runs, §11.5)
 
 ## 12. Security
 

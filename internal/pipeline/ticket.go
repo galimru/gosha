@@ -113,16 +113,22 @@ type ticket struct {
 	recheck bool
 }
 
-// agentPass starts an agent pass bounded by what's left of
-// the budget, in t.actx. end charges the time it took.
-func (t *ticket) agentPass(ctx context.Context) (end func()) {
+// agentPass waits for an agent slot, then starts an agent pass bounded by
+// what's left of the budget, in t.actx. end charges the time it took and
+// frees the slot; waiting for the slot isn't charged.
+func (t *ticket) agentPass(ctx context.Context) (end func(), err error) {
+	release, err := t.e.acquireSlot(ctx)
+	if err != nil {
+		return nil, err
+	}
 	start := time.Now()
 	actx, cancel := context.WithTimeoutCause(ctx, t.budget, errAgentTimeout)
 	t.actx = actx
 	return func() {
 		t.budget -= time.Since(start)
 		cancel()
-	}
+		release()
+	}, nil
 }
 
 // Pass does one pickup pass for a project: it picks the next Ready ticket
@@ -511,7 +517,11 @@ func nonEmpty(s ...string) []string {
 // its failures. It returns a nil result when the pass ended the step: the
 // ticket went Blocked (nil error), or a usage limit or shutdown (error).
 func (t *ticket) runImplementer(ctx context.Context, spec agent.Spec, resultFile string) (*agent.ImplementerResult, error) {
-	defer t.agentPass(ctx)()
+	end, err := t.agentPass(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer end()
 	actx := t.actx
 	res, out, err := t.e.implement(actx, spec, resultFile)
 	if err != nil && spec.Resume != "" && !isStop(actx, err) {

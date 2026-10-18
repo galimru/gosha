@@ -146,7 +146,11 @@ func (t *ticket) runReviewer(ctx context.Context, head string) (*agent.ReviewerR
 	}
 	spec := t.spec(prompt, dir, rp)
 	spec.DisallowedTools = agent.ReviewerDisallowed
-	defer t.agentPass(ctx)()
+	end, err := t.agentPass(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer end()
 	res, _, err := t.e.review(t.actx, spec, resultFile)
 	if err != nil {
 		return nil, t.agentFailed(ctx, "reviewer", err)

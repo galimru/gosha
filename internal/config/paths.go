@@ -104,6 +104,10 @@ func (p ProjectPaths) Repo() string    { return filepath.Join(p.Dir, "repo") }
 func (p ProjectPaths) Context() string { return filepath.Join(p.Dir, "context") }
 func (p ProjectPaths) Runs() string    { return filepath.Join(p.Dir, "runs") }
 
+// RunLock is held by the one process running the project (the daemon or
+// gosha run).
+func (p ProjectPaths) RunLock() string { return filepath.Join(p.Dir, "run.lock") }
+
 // Claude is the project's own CLAUDE_CONFIG_DIR: agent sessions persist
 // there for --resume, and the user's ~/.claude never applies (DESIGN §11.2).
 func (p ProjectPaths) Claude() string { return filepath.Join(p.Dir, "claude") }
