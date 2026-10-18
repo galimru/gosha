@@ -319,8 +319,8 @@ context/
 │   ├── auth.md
 │   └── data-model.md
 ├── glossary.md
-├── _linked/                    # pages linked from tickets that are outside the tree (1 level)
-└── .manifest.json              # page id → path, last_edited_time (Gosha's bookkeeping)
+├── .cache/                     # each page's rendered body, links still as page ids (Gosha's bookkeeping)
+└── .manifest.json              # page id → path, title, child pages, last_edited_time (Gosha's bookkeeping)
 ```
 
 **Rules:**
@@ -328,8 +328,8 @@ context/
 - **A page with child pages** becomes a directory `<slug>/`. Its own content goes in `<slug>/README.md`, and its children go inside.
 - **Root page:** `README.md` at the top of `context/`.
 - **Names:** the page title passed through `slug` (lowercase, `-` separated, at most 60 characters). Page icons and emoji are dropped from names, so `🔐 Authentication & Authorization` becomes `authentication-authorization.md`.
-  - Sibling pages with the same title get a short id suffix (`auth-3f9a.md`).
-  - An empty title becomes `untitled-<id>`.
+  - Sibling pages with the same title all get a short id suffix (the id's last 4 characters, `auth-3f9a.md`), so the name doesn't depend on which came first. So does a page named `README` (or `INDEX` at the top), which would clash with the generated files.
+  - An empty title becomes `untitled-<last 8 characters of the id>`.
 - **Child pages in the parent's text:** where a child page appears in the parent's body, the markdown gets a relative link to the child's file.
 - **Links between pages** (mentions, page links) are rewritten to relative paths inside the mirror. Links to pages outside the mirror keep their Notion URL.
 - **Front-matter** on every file:
@@ -343,18 +343,24 @@ context/
   ---
   ```
 - **`INDEX.md`:** the full tree in Notion's order, with each page's title, path, first sentence and last-edited date. The agent's prompt points it here first.
+- **Pages linked from tickets** but outside the tree (a `_linked/` directory) are not mirrored for now; such links keep pointing at Notion.
 
 ### 6.2 Refresh
-- **Incremental:** a page is re-fetched only when its `last_edited_time` has changed.
-- **Renames and moves:** `.manifest.json` maps page id → path. When a page is renamed or moved in Notion, its file moves accordingly and links to it are rewritten. Pages deleted in Notion are deleted from the mirror.
+- **When:** before every pickup, and every 15 minutes while the project is idle (on every poll while it's paused, so a fixed share is noticed).
+- **Incremental:** one paginated search lists every page shared with the integration with its `last_edited_time`. A page's content is fetched again only when that changed, when the page is new, or when it was fetched within two minutes of its last edit (Notion rounds `last_edited_time` to the minute, so a later edit in the same minute wouldn't show).
+- **The tree comes from the pages themselves:** a page's child pages are the child page blocks in its content, kept in the manifest in Notion's order. Search only says what changed, so a page search hasn't indexed yet is still mirrored (it's fetched directly).
+- **Renames and moves:** `.manifest.json` maps page id → path. Page bodies are cached in `.cache/` with links to other pages kept as page ids, and resolved to relative paths whenever files are written. When a page is renamed or moved in Notion, its file moves and every link to it is rewritten, without fetching the linking pages again. Pages deleted in Notion are deleted from the mirror; links to them, and to pages outside the tree, point at Notion.
 - **Blocks → markdown:** paragraphs, headings, lists, to-dos, code, quotes, callouts, toggles (expanded), tables, dividers, bookmarks and links, and mentions. Images and files become a link plus a caption. Anything unsupported becomes `<!-- unsupported: type -->`.
 - **Databases aren't mirrored** (for now). A child database appears as `<!-- database "<title>" not mirrored -->` at its position in the parent page. Database support can be added later without changing the tree layout (a database would become a directory, one file per row).
-- **Rate limit:** respects Notion's limit (~3 req/s).
-- **Consistency:** before each ticket, a refresh runs and a copy of the mirror is frozen for that run, so the agent sees consistent data.
+- **Rate limit:** respects Notion's limit (~3 req/s); rate limits and server errors are retried with backoff.
+- **Consistency:** before each pickup, a refresh runs and a copy of the mirror (without `.cache/` and the manifest) is frozen into `runs/<ticket>/context/` for that pickup, so its agents see consistent data. A lock (`projects/<project>/context.lock`) keeps a refresh and a freeze, from the daemon or the CLI, from interleaving.
+- **Failures:**
+  - **No access** (bad token, root page not shared or deleted): a setup problem. The project is **paused**, the same fail-closed way as an invalid config (§5.2), until a refresh succeeds.
+  - **Anything else** (Notion down, network, rate limits that don't clear): the last mirror is used and a warning is logged. Only if no mirror was ever built does the project wait and retry without picking anything up.
 
 ### 6.3 Access
 - **Read-only:** through a Notion internal integration with only the **Read content** capability, shared with the root page.
-- **Agent access:** the agent reads the run's frozen copy of the mirror through `--add-dir`. The sandbox (§7.1) makes it read-only, and since it's a per-run copy, nothing can change the mirror itself. It's never committed to the repo.
+- **Agent access:** the agent reads the pickup's frozen copy of the mirror through `--add-dir`. The sandbox (§7.1) makes it read-only, and since it's a per-run copy, nothing can change the mirror itself. It's never committed to the repo.
 
 ## 7. Agents
 
@@ -552,10 +558,10 @@ A Telegram bot posts Gosha's activity to a **private channel**. All projects sha
 | Event | Example |
 |---|---|
 | daemon started / stopped | `gosha v0.3.0 started · 2 projects` |
-| project error / paused | `nextdesk: .gosha/config.yaml invalid at a1b2c3d: linear.team missing · paused` |
-| project recovered | `nextdesk: config valid again · resumed` |
+| project error / paused | `nextdesk · paused at a1b2c3d: .gosha/config.yaml: linear.team: required` (config, Linear team/states, Notion access) |
+| project recovered | `nextdesk · checks pass again at a1b2c3d · resumed` |
 | picked up | `nextdesk · NXT-12 Add login · picked up (fresh)` |
-| context refreshed | `nextdesk · 3 pages updated` (only when something changed) |
+| context refreshed | `nextdesk · context · 1 added, 3 updated` (only when something changed) |
 | implementation done | `NXT-12 · implemented · +210 −35 in 7 files · 14m` + summary |
 | PR opened | link |
 | review round N | `NXT-12 · review 1/3 ❌ · 2 must, 3 should` |
@@ -618,7 +624,9 @@ Everything lives in **one directory**, `~/.gosha` of the running user. `--home` 
         ├── worktrees/<ticket>-review/       # the reviewer's throwaway clone, only during a review
         ├── claude/                          # CLAUDE_CONFIG_DIR for this project's agents (sessions)
         ├── context/                         # Notion mirror (INDEX.md + page tree)
+        ├── context.lock                     # serialises refreshes and freezes
         └── runs/<ticket>/
+            ├── context/                     # this pickup's frozen copy of the mirror (read-only to agents)
             ├── <n>/                         # pass n: the agent's TMPDIR and result file
             ├── <n>-<role>.jsonl             # full agent transcript (redacted); role is implement, review or address
             ├── <n>-settings.json            # generated agent settings
@@ -738,3 +746,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - A fix for failed checks or conflicts goes back through review (a re-review that only takes a review round if it requests changes), then checks. (M4)
 - The base is merged into the branch in the bare clone (`git merge-tree`, git ≥ 2.38); conflicts are resolved by the implementer in a fresh checkout and count as a check round. (M4)
 - Merges are pinned to the checked head; a push by anyone else after the checks blocks the ticket instead of being merged. New human PR feedback is addressed before merging. (M4)
+- The Notion mirror is refreshed before every pickup and every 15 minutes when idle. Search detects changes; the tree comes from each page's child page blocks; only changed pages are fetched. Page bodies are cached with links as page ids, so renames and moves rewrite links without re-fetching. (M5)
+- Notion without access to the root page pauses the project; any other Notion failure uses the last mirror. Each pickup gets its own frozen copy at `runs/<ticket>/context/`. (M5)
+- A project resumes only after the config, Linear and Notion checks all pass, so a pause for one reason isn't cleared by another check passing. (M5)
+- Pages linked from tickets but outside the tree (`_linked/`) are deferred. (M5)

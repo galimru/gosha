@@ -1,19 +1,21 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/galimru/gosha/internal/config"
+	"github.com/galimru/gosha/internal/notion"
 	"github.com/galimru/gosha/internal/pipeline"
 )
 
 func (a *app) validateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "validate [project]",
-		Short: "Check the global config, credentials, and each project's config and Linear states",
+		Short: "Check the global config, credentials, and each project's config, Linear states and Notion access",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -75,7 +77,20 @@ func (a *app) validateProject(cmd *cobra.Command, env *pipeline.Env, name string
 		lin.States.Ready.Name, lin.States.InProgress.Name, lin.States.InReview.Name, lin.States.Blocked.Name)
 	branch, _ := p.Config.BranchName(config.SampleTicket)
 	fmt.Fprintf(w, "✓ %s: branch pattern → %s\n", name, branch)
-	fmt.Fprintf(w, "✓ %s: Notion token set (access is checked from M5)\n", name)
+	nc := notion.New(p.Config.Notion.Token)
+	bot, err := nc.Me(ctx)
+	if err != nil {
+		return fmt.Errorf("notion: %w", err)
+	}
+	root, _ := notion.ParsePageID(p.Config.Notion.RootPage)
+	page, err := nc.Page(ctx, root)
+	if errors.Is(err, notion.ErrNoAccess) {
+		return fmt.Errorf("notion: can't read the root page: share it with the %q integration (%w)", bot.Name, err)
+	}
+	if err != nil {
+		return fmt.Errorf("notion: %w", err)
+	}
+	fmt.Fprintf(w, "✓ %s: Notion root page %q (as %s in %s)\n", name, page.Title(), bot.Name, bot.Bot.WorkspaceName)
 	return nil
 }
 

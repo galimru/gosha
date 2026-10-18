@@ -20,8 +20,8 @@ type Paths struct {
 	Checkout string
 	// RunDir is the run's temp dir and holds the result file: read/write.
 	RunDir string
-	// Context is the run's frozen copy of the project context: read-only.
-	// Empty until the Notion mirror exists (M5).
+	// Context is the pickup's frozen copy of the project context:
+	// read-only. Empty when there is none.
 	Context string
 	// UserHome is the service user's home, for toolchain caches.
 	UserHome string

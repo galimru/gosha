@@ -129,7 +129,7 @@ func TestFailedCheckFixed(t *testing.T) {
 }
 
 func TestCheckRoundsExhausted(t *testing.T) {
-	h := newHarness(t, "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: x\nchecks:\n  max_rounds: 1\n")
+	h := newHarness(t, "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\nchecks:\n  max_rounds: 1\n")
 	h.agent.act = commitEach(t)
 	h.prs.checks = red
 	if err := h.pickup(); err != nil {
@@ -167,7 +167,7 @@ func TestFixWithoutCommitBlocks(t *testing.T) {
 }
 
 func TestRequiredCheckNeverStarts(t *testing.T) {
-	h := newHarness(t, "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: x\nchecks:\n  required: [test, lint]\n  start_grace: 20ms\n")
+	h := newHarness(t, "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\nchecks:\n  required: [test, lint]\n  start_grace: 20ms\n")
 	h.agent.act = commitEach(t)
 	h.prs.checks = green
 	if err := h.pickup(); err != nil {
@@ -181,7 +181,7 @@ func TestRequiredCheckNeverStarts(t *testing.T) {
 }
 
 func TestChecksTimeOut(t *testing.T) {
-	h := newHarness(t, "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: x\nchecks:\n  timeout: 20ms\n  max_rounds: 1\n")
+	h := newHarness(t, "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\nchecks:\n  timeout: 20ms\n  max_rounds: 1\n")
 	h.agent.act = commitEach(t)
 	h.prs.checks = func(int, string) []github.Check {
 		return []github.Check{{Name: "e2e", Kind: github.KindCheckRun, Status: "in_progress"}}
@@ -364,7 +364,7 @@ func TestInterruptedFixKeepsRound(t *testing.T) {
 }
 
 func TestWaitingForChecksDoesntSpendAgentTime(t *testing.T) {
-	h := newHarness(t, "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: x\nagent:\n  timeout: 300ms\n")
+	h := newHarness(t, "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\nagent:\n  timeout: 300ms\n")
 	h.agent.act = commitEach(t)
 	fail := failOn()
 	h.prs.checks = func(call int, sha string) []github.Check {

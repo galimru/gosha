@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/galimru/gosha/internal/notion"
 	"github.com/galimru/gosha/internal/store"
 )
 
@@ -22,6 +23,15 @@ func statusText(ctx context.Context, st *store.Store, project string) string {
 		return fmt.Sprintf("paused at %.7s: %s", ps.Commit, ps.Reason)
 	}
 	return fmt.Sprintf("active @ %.7s", ps.Commit)
+}
+
+// contextText summarises a project's Notion mirror.
+func (a *app) contextText(project string) string {
+	info, err := (&notion.Mirror{Dir: a.home.Project(project).Context()}).Info()
+	if err != nil {
+		return "-"
+	}
+	return fmt.Sprintf("%d pages · %s", info.Pages, info.Refreshed.Local().Format(time.DateTime))
 }
 
 func (a *app) statusCmd() *cobra.Command {
@@ -41,13 +51,13 @@ func (a *app) statusCmd() *cobra.Command {
 			}
 			defer st.Close()
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "PROJECT\tSTATE\tCHECKED")
+			fmt.Fprintln(w, "PROJECT\tSTATE\tCHECKED\tCONTEXT")
 			for _, n := range names {
 				checked := "-"
 				if ps, _ := st.ProjectState(ctx, n); ps != nil {
 					checked = ps.UpdatedAt.Local().Format(time.DateTime)
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\n", n, statusText(ctx, st, n), checked)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", n, statusText(ctx, st, n), checked, a.contextText(n))
 			}
 			if err := w.Flush(); err != nil {
 				return err

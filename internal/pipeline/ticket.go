@@ -79,6 +79,8 @@ type ticket struct {
 	issues issueOps
 	prs    prOps
 	bot    agent.Identity
+	// kb is this pickup's frozen copy of the project context.
+	kb tmpl.Context
 
 	issue linear.Issue
 	// comments are the human comments since the last run: instructions.
@@ -119,8 +121,8 @@ func (t *ticket) agentPass(ctx context.Context) (end func()) {
 }
 
 // Pass does one pickup pass for a project: it picks the next Ready ticket
-// (if any) and takes it as far as M3 goes. It reports whether a ticket was
-// handled. With only set, just that ticket is considered.
+// (if any) and takes it as far as it can go. It reports whether a ticket
+// was handled. With only set, just that ticket is considered.
 func (e *Env) Pass(ctx context.Context, name, only string) (bool, error) {
 	p, err := e.LoadProject(ctx, name)
 	if err != nil {
@@ -133,36 +135,49 @@ func (e *Env) Pass(ctx context.Context, name, only string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if c, err := e.interrupted(ctx, name, lin, only); err != nil || c != nil {
-		if err != nil {
+	refreshed := false
+	if e.contextDue(ctx, p) {
+		if err := e.refreshContext(ctx, p); err != nil {
 			return false, err
 		}
-		bot, err := e.botIdentity(ctx, p.Install)
-		if err != nil {
-			return false, err
-		}
-		return true, e.handle(ctx, p, lin.States, lin.Client, p.Install, bot, *c)
+		refreshed = true
 	}
-	cands, err := e.candidates(ctx, name, lin, only)
+	e.resume(ctx, p)
+	c, err := e.interrupted(ctx, name, lin, only)
 	if err != nil {
 		return false, err
 	}
-	var pick *Candidate
-	for _, d := range Plan(p.Config, lin.States, cands) {
-		if d.Action == Pickup {
-			i := slices.IndexFunc(cands, func(c Candidate) bool { return c.Issue.ID == d.Issue.ID })
-			pick = &cands[i]
-			break
+	if c == nil {
+		cands, err := e.candidates(ctx, name, lin, only)
+		if err != nil {
+			return false, err
+		}
+		for _, d := range Plan(p.Config, lin.States, cands) {
+			if d.Action == Pickup {
+				i := slices.IndexFunc(cands, func(c Candidate) bool { return c.Issue.ID == d.Issue.ID })
+				c = &cands[i]
+				break
+			}
 		}
 	}
-	if pick == nil {
+	if c == nil {
 		return false, nil
+	}
+	// A pickup always starts from the latest context.
+	if !refreshed {
+		if err := e.refreshContext(ctx, p); err != nil {
+			return false, err
+		}
+	}
+	kb, err := e.freezeContext(p, c.Issue.Identifier)
+	if err != nil {
+		return false, err
 	}
 	bot, err := e.botIdentity(ctx, p.Install)
 	if err != nil {
 		return false, err
 	}
-	return true, e.handle(ctx, p, lin.States, lin.Client, p.Install, bot, *pick)
+	return true, e.handle(ctx, p, lin.States, lin.Client, p.Install, bot, kb, *c)
 }
 
 // interrupted finds a run that stopped mid-step (usage limit, shutdown)
@@ -220,8 +235,8 @@ func (e *Env) botIdentity(ctx context.Context, inst *github.Installation) (agent
 // handle claims a ticket and runs it (DESIGN §8.1, §8.2). Failures after
 // the claim go Blocked, except a usage limit or a shutdown: those leave the
 // ticket In Progress and the run resumable.
-func (e *Env) handle(ctx context.Context, p *Project, st *linear.States, is issueOps, prs prOps, bot agent.Identity, c Candidate) error {
-	t := &ticket{e: e, p: p, states: st, issues: is, prs: prs, bot: bot,
+func (e *Env) handle(ctx context.Context, p *Project, st *linear.States, is issueOps, prs prOps, bot agent.Identity, kb tmpl.Context, c Candidate) error {
+	t := &ticket{e: e, p: p, states: st, issues: is, prs: prs, bot: bot, kb: kb,
 		issue: c.Issue, comments: c.NewComments, run: c.OpenRun, started: time.Now(),
 		fromReady: c.Issue.State.ID != st.InProgress.ID, budget: p.Config.Agent.Timeout}
 	if err := t.claim(ctx, c.Comments); err != nil {
@@ -433,7 +448,7 @@ func (t *ticket) implement(ctx context.Context) error {
 	}
 	resultFile := filepath.Join(rp.agent.RunDir, "result.json")
 	prompt, err := agent.RenderPrompt(ctx, t.p.Repo, t.p.Commit, "implement.md", tmpl.Data{
-		Project: t.p.Name, Ticket: Ticket(t.issue, t.comments),
+		Project: t.p.Name, Ticket: Ticket(t.issue, t.comments), Context: t.kb,
 		Branch: t.run.Branch, BaseBranch: t.run.BaseBranch, ResultFile: resultFile,
 	})
 	if err != nil {
@@ -503,8 +518,12 @@ func (t *ticket) spec(prompt, dir string, rp runPaths) agent.Spec {
 		Binary: t.e.ClaudeBinary, Prompt: prompt, Dir: dir, SettingsFile: rp.settings, Transcript: rp.transcript,
 		Mode: cfg.PermissionMode, Model: cfg.Model,
 		OAuthToken: t.e.Global.Claude.OAuthToken, ConfigDir: t.e.Home.Project(t.p.Name).Claude(), TmpDir: rp.agent.RunDir,
-		Git: t.bot, Redact: t.e.Redactor.Redact,
+		Git: t.bot, Redact: t.e.Redactor.Redact, AddDirs: nonEmpty(t.kb.Dir),
 	}
+}
+
+func nonEmpty(s ...string) []string {
+	return slices.DeleteFunc(s, func(x string) bool { return x == "" })
 }
 
 // runImplementer runs an implementer pass (implement or address) and maps
@@ -677,7 +696,7 @@ func (t *ticket) runPaths(n int, role, checkout string) (runPaths, error) {
 	rp := runPaths{
 		agent: agent.Paths{
 			Home: home, Checkout: filepath.Join(pp, "worktrees", filepath.Base(checkout)),
-			RunDir: filepath.Join(runs, fmt.Sprint(n)), UserHome: userHome, Writable: t.e.Global.Agent.Writable,
+			RunDir: filepath.Join(runs, fmt.Sprint(n)), Context: t.kb.Dir, UserHome: userHome, Writable: t.e.Global.Agent.Writable,
 		},
 		settings:   filepath.Join(runs, fmt.Sprintf("%d-settings.json", n)),
 		transcript: filepath.Join(runs, fmt.Sprintf("%d-%s.jsonl", n, role)),

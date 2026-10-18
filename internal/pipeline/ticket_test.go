@@ -19,6 +19,7 @@ import (
 	"github.com/galimru/gosha/internal/gitx"
 	"github.com/galimru/gosha/internal/linear"
 	"github.com/galimru/gosha/internal/store"
+	"github.com/galimru/gosha/internal/tmpl"
 )
 
 type fakeLinear struct {
@@ -226,6 +227,8 @@ type harness struct {
 	agent    *fakeAgent
 	events   *recorder
 	issue    linear.Issue
+	// kb is the frozen project context handed to the pickup.
+	kb tmpl.Context
 }
 
 func newHarness(t *testing.T, cfg string) *harness {
@@ -234,7 +237,7 @@ func newHarness(t *testing.T, cfg string) *harness {
 	up := upstream{t, t.TempDir()}
 	gitIn(t, up.dir, "init", "--quiet", "--initial-branch=main")
 	if cfg == "" {
-		cfg = "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: x\n"
+		cfg = "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\n"
 	}
 	// CI runs on pull requests, so a PR is expected to get checks.
 	os.MkdirAll(filepath.Join(up.dir, ".github", "workflows"), 0o755)
@@ -283,7 +286,7 @@ func (h *harness) pickup(comments ...linear.Comment) error {
 	ctx, cancel := context.WithCancel(h.ctx)
 	defer cancel()
 	h.prs.stop, h.prs.stopped = cancel, false
-	err = h.env.handle(ctx, h.p, states, h.lin, h.prs, agent.Identity{Name: "goshabot[bot]", Email: "1+goshabot[bot]@users.noreply.github.com"}, c)
+	err = h.env.handle(ctx, h.p, states, h.lin, h.prs, agent.Identity{Name: "goshabot[bot]", Email: "1+goshabot[bot]@users.noreply.github.com"}, h.kb, c)
 	if h.prs.stopped && errors.Is(err, context.Canceled) {
 		return nil
 	}
@@ -508,7 +511,7 @@ func TestUsageLimitLeavesTicketInProgress(t *testing.T) {
 }
 
 func TestSetupFailureBlocks(t *testing.T) {
-	h := newHarness(t, "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: x\nagent:\n  setup: [\"echo installing\", \"echo broken >&2; exit 2\"]\n")
+	h := newHarness(t, "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\nagent:\n  setup: [\"echo installing\", \"echo broken >&2; exit 2\"]\n")
 	h.agent.act = func(int, string) string { t.Error("agent ran after a failed setup"); return doneResult }
 	if err := h.pickup(); err != nil {
 		t.Fatal(err)
