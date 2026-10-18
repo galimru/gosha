@@ -86,6 +86,14 @@ const timeFormat = time.RFC3339Nano
 
 func now() string { return time.Now().UTC().Format(timeFormat) }
 
+// formatTime stores the zero time as "".
+func formatTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(timeFormat)
+}
+
 func parseTime(s string) time.Time {
 	t, _ := time.Parse(timeFormat, s)
 	return t
@@ -109,6 +117,17 @@ type Run struct {
 	BlockedReason string
 	// AgentRuns counts agent passes, numbering the transcripts.
 	AgentRuns int
+	// ReviewedSHA is the head the last review ran on, and ReviewID the
+	// GitHub review posted for it (0 until posted).
+	ReviewedSHA string
+	ReviewID    int64
+	// ReviewResult is the path to the last reviewer result file.
+	ReviewResult string
+	// PRCursor is the time of the newest human PR feedback the implementer
+	// has been given.
+	PRCursor time.Time
+	// LastReply is the implementer's last address summary.
+	LastReply string
 	Outcome   string
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -135,10 +154,12 @@ func (s *Store) CreateRun(ctx context.Context, r *Run) error {
 func (s *Store) UpdateRun(ctx context.Context, r *Run) error {
 	ts := now()
 	_, err := s.db.ExecContext(ctx, `UPDATE runs SET mode = ?, branch = ?, pr_number = ?, step = ?, review_round = ?,
-		check_round = ?, impl_session = ?, base_branch = ?, pr_url = ?, blocked_reason = ?, agent_runs = ?, updated_at = ?
+		check_round = ?, impl_session = ?, base_branch = ?, pr_url = ?, blocked_reason = ?, agent_runs = ?,
+		reviewed_sha = ?, review_id = ?, review_result = ?, pr_cursor = ?, last_reply = ?, updated_at = ?
 		WHERE id = ?`,
 		r.Mode, r.Branch, r.PRNumber, r.Step, r.ReviewRound, r.CheckRound, r.ImplSession,
-		r.BaseBranch, r.PRURL, r.BlockedReason, r.AgentRuns, ts, r.ID)
+		r.BaseBranch, r.PRURL, r.BlockedReason, r.AgentRuns,
+		r.ReviewedSHA, r.ReviewID, r.ReviewResult, formatTime(r.PRCursor), r.LastReply, ts, r.ID)
 	if err != nil {
 		return fmt.Errorf("update run: %w", err)
 	}
@@ -154,18 +175,20 @@ func (s *Store) FinishRun(ctx context.Context, id int64, outcome string) error {
 }
 
 const runColumns = `id, project, ticket_id, mode, branch, pr_number, step, review_round, check_round, impl_session,
-	base_branch, pr_url, blocked_reason, agent_runs, outcome, created_at, updated_at`
+	base_branch, pr_url, blocked_reason, agent_runs, reviewed_sha, review_id, review_result, pr_cursor, last_reply,
+	outcome, created_at, updated_at`
 
 func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 	var r Run
-	var created, updated string
+	var created, updated, cursor string
 	err := row.Scan(&r.ID, &r.Project, &r.TicketID, &r.Mode, &r.Branch, &r.PRNumber, &r.Step,
 		&r.ReviewRound, &r.CheckRound, &r.ImplSession, &r.BaseBranch, &r.PRURL, &r.BlockedReason, &r.AgentRuns,
+		&r.ReviewedSHA, &r.ReviewID, &r.ReviewResult, &cursor, &r.LastReply,
 		&r.Outcome, &created, &updated)
 	if err != nil {
 		return nil, err
 	}
-	r.CreatedAt, r.UpdatedAt = parseTime(created), parseTime(updated)
+	r.CreatedAt, r.UpdatedAt, r.PRCursor = parseTime(created), parseTime(updated), parseTime(cursor)
 	return &r, nil
 }
 

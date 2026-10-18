@@ -85,6 +85,8 @@ func TestPlanModes(t *testing.T) {
 		{Candidate{Issue: is, NewComments: []linear.Comment{{Body: "please\n /restart \n"}}}, ModeRestart, "gosha/NXT-12-add-login"},
 		{Candidate{Issue: is, NewComments: []linear.Comment{{Body: "don't /restart yet"}}}, ModeFresh, "gosha/NXT-12-add-login"},
 		{Candidate{Issue: is, OpenRun: &store.Run{Branch: "gosha/NXT-12-add-login-2"}}, ModeResume, "gosha/NXT-12-add-login-2"},
+		{Candidate{Issue: is, OpenRun: &store.Run{Branch: "b", PRNumber: 3}}, "resume (review)", "b"},
+		{Candidate{Issue: is, OpenRun: &store.Run{Branch: "b", PRNumber: 3}, NewComments: []linear.Comment{{Body: "rename it"}}}, "resume (address)", "b"},
 	}
 	for i, c := range cases {
 		d := Plan(project(t), states, []Candidate{c.c})[0]

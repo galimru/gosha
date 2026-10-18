@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-
-	"github.com/galimru/gosha/internal/notify"
 )
 
 // stepNames are the steps in plain words, for the Blocked comment.
@@ -14,7 +12,9 @@ var stepNames = map[string]string{
 	StepImplement: "implementing the ticket",
 	StepPush:      "pushing the branch",
 	StepPR:        "opening the pull request",
-	StepReview:    "the open pull request",
+	StepReview:    "reviewing the pull request",
+	StepAddress:   "addressing feedback on the pull request",
+	StepChecks:    "waiting for checks",
 }
 
 // block posts the Blocked comment, moves the ticket to Blocked and keeps
@@ -60,10 +60,6 @@ func (t *ticket) block(ctx context.Context, reason string, questions []string) e
 	if i := strings.IndexByte(short, '\n'); i > 0 {
 		short = short[:i]
 	}
-	links2 := []notify.Link{t.ticketLink()}
-	if t.run.PRURL != "" {
-		links2 = append(links2, notify.Link{Text: fmt.Sprintf("PR #%d", t.run.PRNumber), URL: t.run.PRURL})
-	}
-	t.notify(fmt.Sprintf("%s · ⛔ blocked while %s: %s", t.issue.Identifier, stepNames[step], short), links2...)
+	t.notify(fmt.Sprintf("%s · ⛔ blocked while %s: %s", t.issue.Identifier, stepNames[step], short), t.ticketLink(), t.prLink())
 	return nil
 }

@@ -58,7 +58,7 @@ func TestRealClaude(t *testing.T) {
 		bin = filepath.Join(t.TempDir(), "claude")
 		os.WriteFile(bin, []byte("#!/bin/sh\nUSER="+os.Getenv("USER")+" exec "+claude+" \"$@\"\n"), 0o755)
 	}
-	settings, err := Settings(p, true)
+	settings, err := Settings(p, RoleImplementer, true)
 	if err != nil {
 		t.Fatal(err)
 	}

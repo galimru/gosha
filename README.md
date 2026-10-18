@@ -53,7 +53,7 @@ gosha auth linear                # confirm the Linear app identity
 gosha add <github-repo-url>      # register a project (needs .gosha/config.yaml on its default branch)
 gosha validate                   # config, credentials, Linear states
 gosha run <project> --dry-run    # what Gosha would pick up, reported here and in Telegram
-gosha run <project> --once       # take one Ready ticket to an open PR
+gosha run <project> --once       # take one Ready ticket to a reviewed PR
 gosha run <project>              # keep doing that, in the foreground
 ```
 

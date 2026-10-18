@@ -41,6 +41,9 @@ type Spec struct {
 	Model      string
 	// Resume continues an earlier session.
 	Resume string
+	// DisallowedTools are removed from the agent, whatever the permission
+	// mode: the reviewer can't edit (DESIGN §7.1).
+	DisallowedTools []string
 	// Env.
 	OAuthToken string
 	ConfigDir  string // CLAUDE_CONFIG_DIR
@@ -67,6 +70,9 @@ func (s Spec) args() []string {
 	}
 	if s.Resume != "" {
 		args = append(args, "--resume", s.Resume)
+	}
+	if len(s.DisallowedTools) > 0 {
+		args = append(args, "--disallowedTools", strings.Join(s.DisallowedTools, ","))
 	}
 	return args
 }

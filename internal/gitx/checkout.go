@@ -135,6 +135,12 @@ func (r *Repo) Diff(ctx context.Context, base, branch string) (DiffStat, error) 
 	return d, nil
 }
 
+// DiffText is the diff of branch against its merge base with origin/<base>.
+func (r *Repo) DiffText(ctx context.Context, base, branch string) (string, error) {
+	out, err := r.git(ctx, "", "diff", "refs/remotes/origin/"+base+"...refs/heads/"+branch)
+	return string(out), err
+}
+
 // Push pushes the bare clone's branch to origin. It never forces: a branch
 // that moved on GitHub is an error, not something to overwrite.
 func (r *Repo) Push(ctx context.Context, token, branch string) error {

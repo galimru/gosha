@@ -1,6 +1,6 @@
 # Gosha — Design
 
-> Status: **agreed plan**, implemented up to M2 (ticket → PR). Implementation order: [ROADMAP.md](ROADMAP.md). Assumptions checked in M0: [SPIKES.md](SPIKES.md).
+> Status: **agreed plan**, implemented up to M3 (review loop). Implementation order: [ROADMAP.md](ROADMAP.md). Assumptions checked in M0: [SPIKES.md](SPIKES.md).
 
 ## 1. Overview
 
@@ -248,8 +248,9 @@ The binary embeds default templates, and any file present in the repo overrides 
 | `.Ticket.Comments` | human comments since the last run | prompts |
 | `.Context.Dir` / `.Context.Index` | path to the mirror / contents of `INDEX.md` | prompts |
 | `.Branch` / `.BaseBranch` | `gosha/NXT-12-add-login` / `main` | prompts |
-| `.Diff` | diff against the base | review |
-| `.Feedback.Review` / `.Feedback.CI` | review comments / failed-check logs | address |
+| `.Diff` | diff against the base (cut at 100 KB) | review |
+| `.Feedback.Review` / `.Feedback.CI` | review comments and human PR feedback / failed-check logs | address |
+| `.Feedback.Previous` | the last round's findings and the implementer's reply | review (from round 2) |
 | `.Round` | `2` | review, address |
 | `.ResultFile` | path for the result JSON | prompts |
 
@@ -362,8 +363,8 @@ Every run uses `--output-format stream-json --verbose`; the stream is saved (red
 
 | | Implementer | Reviewer |
 |---|---|---|
-| Working dir | ticket checkout (read/write) | ticket checkout (read-only use) |
-| Context | ticket + human comments + project context + feedback | ticket + project context + diff vs base |
+| Working dir | ticket checkout (read/write) | a fresh throwaway clone of the pushed head, `worktrees/<ticket>-review`, removed after the round |
+| Context | ticket + human comments + project context + feedback | ticket + project context + diff vs base + the last round's findings and reply |
 | Session | resumes its own session across address passes when possible | **always fresh** |
 | Tools | all tools (edit, write, shell, local git) | edit/write tools removed; read, search, shell for running tests |
 | Output | commits in the checkout + result JSON | result JSON |
@@ -388,7 +389,7 @@ The two layers need different shapes, because they resolve conflicts differently
   - `auto`: `--permission-mode auto --permission-prompts none`. Claude's classifier approves or blocks each action. Works headless; in M0 it blocked no legitimate step.
   - `bypass`: `--dangerously-skip-permissions`. Everything not explicitly denied is allowed, so the Write and Edit tools can write anywhere the service user can. Explicit opt-in only; `gosha doctor` warns about it.
 - **Deny rules** apply in every mode: no `Read` or `Edit` anywhere in `~/.gosha` except the run's checkout and temp directory, and no `Edit` in the context copy.
-- **Reviewer:** its edit and write tools are *removed* (`--disallowedTools`), which holds in any mode, so it can read and run tests but not change code.
+- **Reviewer:** its edit and write tools are *removed* (`--disallowedTools Edit,Write,NotebookEdit`), which holds in any mode, and it gets no `Edit` allow rules, so it can read and run tests but not change code. Its Bash can still write in its own clone (tests need that), which is why it runs in a throwaway clone and never in the implementer's checkout.
 - **Sandbox:** Gosha enables **Claude Code's built-in sandbox** (OS-level: Seatbelt on macOS, bubblewrap on Linux) for every agent run, with `failIfUnavailable: true` and `allowUnsandboxedCommands: false` (the agent can't ask to run a command outside it):
   - **Writable:** the ticket's checkout, the run's temp directory, and toolchain caches. The default cache list depends on the OS (e.g. `~/.cache`, `~/go`, `~/.npm`, and `~/Library/Caches` on macOS), plus `agent.writable` from the global config. The sandbox can't create the missing parent of an allowed directory, so Gosha creates every writable directory before the run.
   - **Read-only:** the run's frozen context copy.
@@ -444,7 +445,7 @@ All of them go through the same **address** step (`address.md`, data in `.Feedba
 4. Claim: move the ticket to In Progress, record the run, and notify Telegram.
 5. Decide the mode:
    - `/restart` in the new comments → close the PR, delete the branch → **fresh**
-   - an open Gosha PR exists → **resume** (address step)
+   - an open Gosha PR exists → **resume**: the round limit resets; new ticket comments or new human PR feedback go to an **address** pass first, otherwise the PR gets a fresh review (§8.3)
    - a merged PR exists (follow-up) → new branch with suffix `-2`, `-3`, … → **fresh**
    - otherwise → **fresh**
 
@@ -469,11 +470,14 @@ All of them go through the same **address** step (`address.md`, data in `.Feedba
 - **Suffixes:** follow-up runs on the same ticket, and names that already exist on the remote without being Gosha's, get `-2`, `-3`, … appended. Gosha never overwrites a branch it doesn't own.
 
 ### 8.3 Review loop (at most `review.max_rounds`)
-1. Run the reviewer on the current diff.
-2. Post the result as a GitHub PR review with inline comments. The review event is `COMMENT`, with a ✅ or ❌ verdict in the body (see §8.6).
-3. `approve`, with no unresolved `must` comments and no new human PR comments → go to **checks**.
-4. Otherwise run the implementer with `address.md`, passing the reviewer's comments, any human PR comments and human ticket comments. Push, then start the next round.
-5. If the limit is hit → **Blocked**.
+1. Run the reviewer on the branch head, in a fresh clone (§7), with `agent.setup` run first. From round 2 its prompt includes the last round's findings and the implementer's reply, so it checks they were resolved instead of starting over.
+2. Post the result as a GitHub PR review on that head SHA, with inline comments. The review event is `COMMENT`, with a ✅ or ❌ verdict in the body (see §8.6). Comments GitHub can't anchor (a line outside the diff, a whole file) go into the review body, so one bad line number never fails the review.
+3. Collect **human PR feedback** since the run's PR cursor: conversation comments, inline comments and review bodies, from anyone who isn't a bot.
+4. `approve`, with no `must` comments and no new human PR feedback → go to **checks**.
+5. If this was round `review.max_rounds` → **Blocked**, listing the unresolved `must` comments and human feedback.
+6. Otherwise run the implementer with `address.md`, resuming its session in the ticket checkout, and passing the reviewer's comments, the human PR feedback and new human ticket comments. Push if it committed, and reply on the PR with its summary (a reply with no code changes is allowed: the next reviewer sees why). The PR cursor moves past the feedback it was given. Start the next round.
+
+Steps are recorded per round (`review` → `address` → `review` …), with the reviewed SHA and the posted review id, so a run that stops mid-round doesn't run or post the same review twice.
 
 ### 8.4 Checks (there's no branch protection, so Gosha decides)
 For the PR's **head SHA**:
@@ -604,11 +608,12 @@ Everything lives in **one directory**, `~/.gosha` of the running user. `--home` 
         ├── secrets.env                      # optional overrides, chmod 600
         ├── repo/                            # bare clone (presence = project registered)
         ├── worktrees/<ticket>/              # ticket checkout (a local clone), one per active ticket
+        ├── worktrees/<ticket>-review/       # the reviewer's throwaway clone, only during a review
         ├── claude/                          # CLAUDE_CONFIG_DIR for this project's agents (sessions)
         ├── context/                         # Notion mirror (INDEX.md + page tree)
         └── runs/<ticket>/
             ├── <n>/                         # pass n: the agent's TMPDIR and result file
-            ├── <n>-<role>.jsonl             # full agent transcript (redacted)
+            ├── <n>-<role>.jsonl             # full agent transcript (redacted); role is implement, review or address
             ├── <n>-settings.json            # generated agent settings
             └── <n>-setup.log                # agent.setup output
 ```
@@ -719,3 +724,6 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - Sandbox layout: the OS sandbox denies `~/.gosha` and re-allows the run's paths; permission rules deny everything around the run's paths, because a permission deny beats any allow. (M2)
 - `agent.setup` is run by Gosha outside the sandbox, as a deliberate, documented risk (§12). (M2)
 - Per-project Claude config dir (`projects/<project>/claude/`); prompts go to claude on stdin. (M2)
+- The reviewer runs in a fresh throwaway clone of the pushed head each round, so nothing it does reaches the implementer's checkout or the branch. Each round is a new session, but it's shown the last round's findings and the implementer's reply. (M3)
+- Human PR feedback (comments, inline comments, review bodies from non-bots) is collected before every review verdict from a per-run cursor, and forces an address pass. Address passes reply on the PR with the implementer's summary. (M3)
+- `agent.timeout` is one budget per pickup, shared by every agent pass in it. (M3)

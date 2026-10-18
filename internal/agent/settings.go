@@ -65,15 +65,28 @@ func (p Paths) EnsureDirs() error {
 	return nil
 }
 
-// Settings builds the settings file for an implementer run (DESIGN §7.1).
+// Agent roles (DESIGN §7).
+const (
+	RoleImplementer = "implement"
+	RoleReviewer    = "review"
+)
+
+// ReviewerDisallowed are the tools removed from the reviewer.
+var ReviewerDisallowed = []string{"Edit", "Write", "NotebookEdit"}
+
+// Settings builds the settings file for an agent run (DESIGN §7.1). The
+// reviewer gets no Edit allows; its edit tools are also removed outright
+// (ReviewerDisallowed), which holds in every permission mode.
 //
 // The two layers need different shapes (SPIKES §1i): the OS sandbox denies
 // all of Home and re-allows the run's paths with allowRead/allowWrite, but
 // for permission rules a deny always beats an allow, so file tools get
 // denies for everything in Home *around* the run's paths instead.
-func Settings(p Paths, sandbox bool) ([]byte, error) {
-	allow := []string{"Read", "Bash", "WebFetch", "WebSearch", "Task", "TodoWrite", "ToolSearch",
-		"Edit(" + rule(p.Checkout) + "/**)", "Edit(" + rule(p.RunDir) + "/**)"}
+func Settings(p Paths, role string, sandbox bool) ([]byte, error) {
+	allow := []string{"Read", "Bash", "WebFetch", "WebSearch", "Task", "TodoWrite", "ToolSearch"}
+	if role != RoleReviewer {
+		allow = append(allow, "Edit("+rule(p.Checkout)+"/**)", "Edit("+rule(p.RunDir)+"/**)")
+	}
 	var deny []string
 	siblings, err := around(p.Home, []string{p.Checkout, p.RunDir, p.Context})
 	if err != nil {

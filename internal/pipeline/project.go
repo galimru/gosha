@@ -29,6 +29,8 @@ type Env struct {
 	ClaudeBinary string
 	// Implement runs the implementer: agent.Implement unless replaced in tests.
 	Implement func(context.Context, agent.Spec, string) (*agent.ImplementerResult, *agent.Outcome, error)
+	// Review runs the reviewer: agent.Review unless replaced in tests.
+	Review func(context.Context, agent.Spec, string) (*agent.ReviewerResult, *agent.Outcome, error)
 
 	botMu sync.Mutex
 	bot   *agent.Identity
@@ -39,6 +41,13 @@ func (e *Env) implement(ctx context.Context, s agent.Spec, resultFile string) (*
 		return e.Implement(ctx, s, resultFile)
 	}
 	return agent.Implement(ctx, s, resultFile)
+}
+
+func (e *Env) review(ctx context.Context, s agent.Spec, resultFile string) (*agent.ReviewerResult, *agent.Outcome, error) {
+	if e.Review != nil {
+		return e.Review(ctx, s, resultFile)
+	}
+	return agent.Review(ctx, s, resultFile)
 }
 
 // Project is a project with its config freshly loaded from the default branch.
