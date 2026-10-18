@@ -23,9 +23,9 @@ var ErrNotFound = errors.New("not found")
 const extraHeaderKey = "http.https://github.com/.extraheader"
 
 // Env is the environment for every git command: PATH and HOME only, the
-// user's global and system config disabled, no prompts, and the token (if
-// any) as an HTTP header through GIT_CONFIG_* so it never reaches argv or a
-// config file.
+// user's global and system config disabled, no prompts, no hooks, and the
+// token (if any) as an HTTP header through GIT_CONFIG_* so it never reaches
+// argv or a config file.
 func Env(token string) []string {
 	env := []string{
 		"PATH=" + os.Getenv("PATH"),
@@ -37,15 +37,18 @@ func Env(token string) []string {
 		"GIT_ASKPASS=",
 		"SSH_ASKPASS=",
 	}
-	if token == "" {
-		return append(env, "GIT_CONFIG_COUNT=0")
+	var kv [][2]string
+	if token != "" {
+		basic := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+		kv = append(kv, [2]string{extraHeaderKey, "AUTHORIZATION: basic " + basic})
 	}
-	basic := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
-	return append(env,
-		"GIT_CONFIG_COUNT=1",
-		"GIT_CONFIG_KEY_0="+extraHeaderKey,
-		"GIT_CONFIG_VALUE_0=AUTHORIZATION: basic "+basic,
-	)
+	// Gosha's own git commands never run hooks, whatever a repo's config says.
+	kv = append(kv, [2]string{"core.hooksPath", os.DevNull})
+	env = append(env, fmt.Sprintf("GIT_CONFIG_COUNT=%d", len(kv)))
+	for i, p := range kv {
+		env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, p[0]), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", i, p[1]))
+	}
+	return env
 }
 
 // Error is a failed git command with its stderr.
