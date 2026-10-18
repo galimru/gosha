@@ -83,7 +83,7 @@ Changes from the plan:
 ## M4 — Checks & merge
 
 **Status: built** (2026-10-18), pending the end-to-end check below on a real project. Behaviour that is specific to M4, until deploy watch and delivery exist (M6):
-- **After the merge,** Gosha posts a short Delivered comment (PR link, merge commit, diff size, the implementer's summary, review and check rounds, the checks that passed), moves the ticket to In Review and finishes the run. There's no deploy watch yet, and the full Delivered comment (DESIGN §3) comes in M6.
+- **After the merge,** Gosha posts a short Delivered comment (PR link, merge commit, diff size, the implementer's summary, review and check rounds, the checks that passed), moves the ticket to In Review and finishes the run. There's no deploy watch yet, and the full Delivered comment (DESIGN §3) comes in M6. (M6 adds both.)
 - **Runs that M3 parked at `checks` are active again,** so they wait for checks and merge on the first pass after the upgrade. Only Blocked runs are parked now.
 
 Changes from the plan:
@@ -121,6 +121,16 @@ Changes from the plan:
 **Done when:** an agent's transcript shows it reading the relevant Notion pages for a ticket.
 
 ## M6 — Deliver
+
+**Status: built** (2026-10-18), pending the end-to-end check below on a real project.
+
+Changes from the plan:
+- **A follow-up with no new human comment goes Blocked** at once, asking what to change, instead of running the implementer on a ticket that's already shipped. The follow-up's implementer is told about the earlier PR (`.FollowUp`: link, merge commit, summary, deploy result).
+- **A follow-up comes from any merged PR,** Gosha's or a human's. Its PR is titled `NXT-12: <title> (follow-up)` and links the earlier one.
+- **Ready after a failed deploy** looks at the deploy again when there's no new comment (a human may have re-run it), and opens a follow-up when there is one. The deploy run is found by the merge commit's `head_sha`; none within `deploy.timeout` goes Blocked. `gosha validate` warns when the workflow file isn't on the default branch.
+- **The Delivered comment's data is kept on the run** (`runs.report`) as it's gathered, so a delivery resumed after a restart reports everything. The implementer result has a new optional `left_out` list for "deliberately left out", shown in the PR body and the Delivered comment.
+- **The merged branch and checkout are removed before the deploy watch,** not at delivery.
+- **`/restart` lines aren't passed to agents,** and ticket comments posted during a pickup reach its next implementer pass (address or fix), not only the next pickup.
 
 - Deploy watch, Delivered comment, In Review transition
 - Follow-up PRs from In Review → Ready, `/restart`
