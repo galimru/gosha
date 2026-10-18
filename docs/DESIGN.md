@@ -214,7 +214,6 @@ deploy:                        # optional
 agent:
   timeout: 60m                 # total agent working time per pickup (waiting for CI doesn't count)
   model: ""                    # optional override
-  setup: ["make deps"]         # optional commands run in a fresh checkout (outside the sandbox, §12)
   permission_mode: dontask     # dontask (default) | auto | bypass; see §7.1
 ```
 
@@ -425,7 +424,7 @@ All of them go through the same **address** step (`address.md`, data in `.Feedba
 
 ### 8.2 Implement
 1. Refresh the project context and freeze a copy for the run (§6.2).
-2. Fetch, then create the ticket checkout `worktrees/<ticket>/` from `origin/<base>` and run `agent.setup` in it (outside the sandbox, with the agent's scrubbed environment; see §12).
+2. Fetch, then create the ticket checkout `worktrees/<ticket>/` from `origin/<base>`. Gosha runs no commands in it: the implementer installs dependencies itself, sandboxed like the rest of its work (the repo's `CLAUDE.md` says how).
    - **The checkout is a self-contained local clone, not a linked `git worktree`.** The agent can write to everything in it, including `.git/`. A linked worktree would share the bare clone's refs, hooks and config, including `origin/<default>` (where config is read from) and the hooks Gosha's own push would run with the token in its environment.
    - **Gosha never runs git inside the checkout once an agent has used it.** It collects the work with `git fetch <checkout>` *from the bare clone*, which runs only upload-pack in the checkout, and then counts commits, measures the diff and pushes from the bare clone. Every Gosha git command also runs with hooks disabled.
    - A new run always starts from a fresh checkout. Later passes of the same run (resume) reuse it, and a lost checkout is rebuilt from the work Gosha already collected.
@@ -441,7 +440,7 @@ All of them go through the same **address** step (`address.md`, data in `.Feedba
 - **Suffixes:** follow-up runs on the same ticket, and names that already exist on the remote without being Gosha's, get `-2`, `-3`, … appended. Gosha never overwrites a branch it doesn't own.
 
 ### 8.3 Review loop (at most `review.max_rounds`)
-1. Run the reviewer on the branch head, in a fresh clone (§7), with `agent.setup` run first. From round 2 its prompt includes the last round's findings and the implementer's reply, so it checks they were resolved instead of starting over.
+1. Run the reviewer on the branch head, in a fresh clone (§7). From round 2 its prompt includes the last round's findings and the implementer's reply, so it checks they were resolved instead of starting over.
 2. Post the result as a GitHub PR review on that head SHA, with inline comments. The review event is `COMMENT`, with a ✅ or ❌ verdict in the body (see §8.6). Comments GitHub can't anchor (a line outside the diff, a whole file) go into the review body, so one bad line number never fails the review.
 3. Collect **human PR feedback** since the run's PR cursor: conversation comments, inline comments and review bodies, from anyone who isn't a bot.
 4. `approve`, with no `must` comments and no new human PR feedback → go to **checks**.
@@ -451,7 +450,7 @@ All of them go through the same **address** step (`address.md`, data in `.Feedba
 Steps are recorded per round (`review` → `address` → `review` …), with the reviewed SHA and the posted review id, so a run that stops mid-round doesn't run or post the same review twice.
 
 ### 8.4 Checks (there's no branch protection, so Gosha decides)
-Gosha waits for checks in-line: the ticket stays the project's active ticket while CI runs (up to `checks.timeout`). Waiting doesn't spend `agent.timeout`, which counts only agent passes and `agent.setup`.
+Gosha waits for checks in-line: the ticket stays the project's active ticket while CI runs (up to `checks.timeout`). Waiting doesn't spend `agent.timeout`, which counts only agent passes.
 
 For the PR's **head SHA**:
 1. **Expected checks:**
@@ -597,7 +596,6 @@ Everything lives in **one directory**, `~/.gosha` of the running user. `--home` 
             ├── <n>/                         # pass n: the agent's TMPDIR and result file
             ├── <n>-<role>.jsonl             # full agent transcript (redacted); role is implement, review or address
             ├── <n>-settings.json            # generated agent settings
-            └── <n>-setup.log                # agent.setup output
 ```
 
 The project's config is **not** in this tree; it's read from the repo (§5.2). `gosha config show <project>` prints the effective config (repo file + defaults).
@@ -672,7 +670,6 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
   - the reviewer flags any PR that touches `.gosha/` unless the ticket explicitly asks for it
   - agents use Gosha's own Claude settings directory, not the user's personal one
   - ticket checkouts are separate clones, and Gosha never runs git inside one after an agent has used it (§8.2)
-- **Known risk: `agent.setup` runs outside the sandbox.** It runs in a fresh checkout of the default branch with the agent's scrubbed environment (no secrets in it), but it can read files under `~/.gosha`. The commands come from the default branch's config, but the code they run (a `Makefile`, `package.json` scripts) can include agent-written code once Gosha merges its own PRs (M4). Mitigations: review, CI, and a separate OS user (§11.2). Keep `agent.setup` minimal, or leave dependency installs to the agent, which runs them sandboxed.
 - **Service user** (§11.2): Gosha runs as an existing regular user and refuses root. For extra isolation, the operator can create a separate regular account and install with `--user`.
 - Credentials:
   - GitHub: App private key
@@ -703,11 +700,11 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - Daily digest at 09:00 (configurable, can be disabled). It also serves as the sign that Gosha is still running.
 - Ticket checkouts are self-contained local clones, never linked worktrees, and Gosha never runs git inside one after an agent has used it: the work is collected by fetching from the bare clone. (M2)
 - Sandbox layout: the OS sandbox denies `~/.gosha` and re-allows the run's paths; permission rules deny everything around the run's paths, because a permission deny beats any allow. (M2)
-- `agent.setup` is run by Gosha outside the sandbox, as a deliberate, documented risk (§12). (M2)
+- Gosha runs no repo-defined commands outside the sandbox: there's no `agent.setup`, and agents install dependencies themselves. (M7)
 - Per-project Claude config dir (`projects/<project>/claude/`); prompts go to claude on stdin. (M2)
 - The reviewer runs in a fresh throwaway clone of the pushed head each round, so nothing it does reaches the implementer's checkout or the branch. Each round is a new session, but it's shown the last round's findings and the implementer's reply. (M3)
 - Human PR feedback (comments, inline comments, review bodies from non-bots) is collected before every review verdict from a per-run cursor, and forces an address pass. Address passes reply on the PR with the implementer's summary. (M3)
-- `agent.timeout` is one budget per pickup, shared by every agent pass in it. (M3) It counts agent passes and `agent.setup` only, not waiting for CI. (M4)
+- `agent.timeout` is one budget per pickup, shared by every agent pass in it. (M3) It counts agent passes only, not waiting for CI. (M4)
 - Checks are waited for in-line; the ticket stays the project's active ticket meanwhile. A run is parked only while Blocked. (M4)
 - A fix for failed checks or conflicts goes back through review (a re-review that only takes a review round if it requests changes), then checks. (M4)
 - The base is merged into the branch in the bare clone (`git merge-tree`, git ≥ 2.38); conflicts are resolved by the implementer in a fresh checkout and count as a check round. (M4)

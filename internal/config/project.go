@@ -71,7 +71,6 @@ type Deploy struct {
 type ProjectAgent struct {
 	Timeout        time.Duration `yaml:"timeout"`
 	Model          string        `yaml:"model"`
-	Setup          []string      `yaml:"setup"`
 	PermissionMode string        `yaml:"permission_mode" default:"dontask"`
 }
 

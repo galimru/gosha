@@ -530,18 +530,6 @@ func TestUsageLimitLeavesTicketInProgress(t *testing.T) {
 	}
 }
 
-func TestSetupFailureBlocks(t *testing.T) {
-	h := newHarness(t, "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: 1a2b3c4d5e6f708192a3b4c5d6e7f809\nagent:\n  setup: [\"echo installing\", \"echo broken >&2; exit 2\"]\n")
-	h.agent.act = func(int, string) string { t.Error("agent ran after a failed setup"); return doneResult }
-	if err := h.pickup(); err != nil {
-		t.Fatal(err)
-	}
-	r := h.run()
-	if r.Step != StepBlocked || !strings.Contains(r.BlockedReason, "exit 2") || !strings.Contains(r.BlockedReason, "broken") {
-		t.Errorf("run = %+v", r)
-	}
-}
-
 func TestInterruptedRunKeepsComments(t *testing.T) {
 	h := newHarness(t, "")
 	note := linear.Comment{ID: "c1", Body: "Use OAuth.", Author: "Ann", Human: true, CreatedAt: time.Now()}

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -104,7 +103,7 @@ type ticket struct {
 	// resuming is set when the pickup continues an open run.
 	resuming bool
 	// budget is what's left of agent.timeout in this pickup. Agent passes
-	// and agent.setup spend it; waiting for CI doesn't.
+	// spend it; waiting for CI doesn't.
 	budget time.Duration
 	// actx is the current agent pass's context, bounded by the budget.
 	actx context.Context
@@ -113,7 +112,7 @@ type ticket struct {
 	recheck bool
 }
 
-// agentPass starts an agent pass (or agent.setup) bounded by what's left of
+// agentPass starts an agent pass bounded by what's left of
 // the budget, in t.actx. end charges the time it took.
 func (t *ticket) agentPass(ctx context.Context) (end func()) {
 	start := time.Now()
@@ -490,8 +489,7 @@ func (t *ticket) implement(ctx context.Context) error {
 }
 
 // prepare makes checkout ready for an agent pass: it clones it if needed,
-// numbers the pass, lays out its files and runs agent.setup in a fresh
-// clone. A failed setup sends the ticket Blocked.
+// numbers the pass and lays out its files.
 func (t *ticket) prepare(ctx context.Context, checkout, role string) (fresh bool, rp runPaths, err error) {
 	fresh, err = t.p.Repo.CloneCheckout(ctx, checkout, t.run.BaseBranch, t.run.Branch)
 	if err != nil {
@@ -503,19 +501,6 @@ func (t *ticket) prepare(ctx context.Context, checkout, role string) (fresh bool
 	}
 	if rp, err = t.runPaths(t.run.AgentRuns, role, checkout); err != nil {
 		return false, rp, err
-	}
-	if fresh && len(t.p.Config.Agent.Setup) > 0 {
-		end := t.agentPass(ctx)
-		defer end()
-		if err := t.setup(t.actx, checkout, rp); err != nil {
-			if errors.Is(context.Cause(t.actx), errAgentTimeout) {
-				return false, rp, t.block(ctx, fmt.Sprintf("`agent.setup` ran out of time (agent.timeout %v).", t.p.Config.Agent.Timeout), nil)
-			}
-			if ctx.Err() != nil {
-				return false, rp, err
-			}
-			return false, rp, t.block(ctx, err.Error(), nil)
-		}
 	}
 	return fresh, rp, nil
 }
@@ -717,7 +702,6 @@ type runPaths struct {
 	agent      agent.Paths
 	settings   string
 	transcript string
-	setupLog   string
 }
 
 func (t *ticket) runPaths(n int, role, checkout string) (runPaths, error) {
@@ -739,7 +723,6 @@ func (t *ticket) runPaths(n int, role, checkout string) (runPaths, error) {
 		},
 		settings:   filepath.Join(runs, fmt.Sprintf("%d-settings.json", n)),
 		transcript: filepath.Join(runs, fmt.Sprintf("%d-%s.jsonl", n, role)),
-		setupLog:   filepath.Join(runs, fmt.Sprintf("%d-setup.log", n)),
 	}
 	if err := os.MkdirAll(t.e.Home.Project(t.p.Name).Claude(), 0o700); err != nil {
 		return runPaths{}, err
@@ -752,49 +735,6 @@ func (t *ticket) runPaths(n int, role, checkout string) (runPaths, error) {
 		return runPaths{}, err
 	}
 	return rp, os.WriteFile(rp.settings, data, 0o600)
-}
-
-// setup runs agent.setup in a fresh checkout. It runs outside the agent
-// sandbox, with the agent's scrubbed environment (DESIGN §12).
-func (t *ticket) setup(ctx context.Context, dir string, rp runPaths) error {
-	log, err := os.OpenFile(rp.setupLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer log.Close()
-	for _, c := range t.p.Config.Agent.Setup {
-		fmt.Fprintf(log, "$ %s\n", c)
-		cmd := exec.CommandContext(ctx, "sh", "-c", c)
-		cmd.Dir = dir
-		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "TMPDIR=" + rp.agent.RunDir}
-		var tail tailWriter
-		cmd.Stdout, cmd.Stderr = &tail, &tail
-		err := cmd.Run()
-		log.WriteString(t.e.Redactor.Redact(string(tail.buf)))
-		if err != nil {
-			return fmt.Errorf("`agent.setup` command `%s` failed: %v\n\n```\n%s\n```", c, err, strings.TrimSpace(lastLines(string(tail.buf), 20)))
-		}
-	}
-	return nil
-}
-
-// tailWriter keeps the last 64 KiB of output.
-type tailWriter struct{ buf []byte }
-
-func (w *tailWriter) Write(p []byte) (int, error) {
-	w.buf = append(w.buf, p...)
-	if over := len(w.buf) - 64<<10; over > 0 {
-		w.buf = w.buf[over:]
-	}
-	return len(p), nil
-}
-
-func lastLines(s string, n int) string {
-	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	return strings.Join(lines, "\n")
 }
 
 func (t *ticket) ticketLink() notify.Link {

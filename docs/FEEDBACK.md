@@ -50,14 +50,6 @@ Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejec
 - `agent.permission_mode` is removed from the repo config, and `bypass` is gone.
 - The setting is host-level only; no per-project switch.
 
-## 3. Drop `agent.setup`
-
-**Status:** agreed
-
-**Today (§8.2, §8.3, §12):** repo-defined setup commands run outside the sandbox, before the implementer and before every review round. It's the one documented hole in the sandbox.
-
-**Change:** remove it. Agents install dependencies themselves, under the same rules as the rest of their work (point 2); the repo's `CLAUDE.md` says how.
-
 ## 4. Report the deploy instead of blocking on it
 
 **Status:** agreed
