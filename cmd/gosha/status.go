@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/galimru/gosha/internal/notion"
+	"github.com/galimru/gosha/internal/pipeline"
 	"github.com/galimru/gosha/internal/store"
 )
 
@@ -50,6 +51,13 @@ func (a *app) statusCmd() *cobra.Command {
 				return err
 			}
 			defer st.Close()
+			until, err := pipeline.LimitedUntil(ctx, st)
+			if err != nil {
+				return err
+			}
+			if !until.IsZero() {
+				fmt.Fprintf(cmd.OutOrStdout(), "⏸ Claude usage limit: all agents paused until %s\n\n", until.Local().Format(time.DateTime))
+			}
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 			fmt.Fprintln(w, "PROJECT\tSTATE\tCHECKED\tCONTEXT")
 			for _, n := range names {

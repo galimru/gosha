@@ -153,7 +153,11 @@ func (a *app) env(ctx context.Context) (*pipeline.Env, error) {
 		}
 		tg.Close()
 	})
-	return &pipeline.Env{Home: a.home, Global: g, App: app, Store: st, Notify: tg, Log: a.log, Redactor: a.red}, nil
+	limit, err := pipeline.NewUsageLimit(ctx, st, tg, a.log)
+	if err != nil {
+		return nil, err
+	}
+	return &pipeline.Env{Home: a.home, Global: g, App: app, Store: st, Notify: tg, Log: a.log, Redactor: a.red, Limit: limit}, nil
 }
 
 // refuseRoot stops commands that run agents from running as root (DESIGN §11.2).

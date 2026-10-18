@@ -270,7 +270,8 @@ func (e *Env) handle(ctx context.Context, p *Project, st *linear.States, is issu
 	case ctx.Err() == nil && errors.Is(context.Cause(wctx), errTicketMoved):
 		return t.stopped(ctx)
 	case errors.As(err, &le):
-		e.Notify.Send(notify.Event{Project: p.Name, Text: fmt.Sprintf("%s · ⏸ %v", t.issue.Identifier, le)})
+		e.Log.Warn("usage limit", "project", p.Name, "ticket", t.issue.Identifier, "step", t.run.Step, "err", le)
+		e.Limit.Hit(ctx, le.ResetsAt)
 		return err
 	case ctx.Err() != nil:
 		return err

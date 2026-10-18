@@ -76,5 +76,5 @@ func (a *app) runCmd() *cobra.Command {
 // daemon wires the pipeline into a supervisor.
 func (a *app) daemon(env *pipeline.Env) *daemon.Daemon {
 	return &daemon.Daemon{Home: a.home, Pass: env.Pass, Notify: env.Notify, Log: a.log,
-		Redact: a.redact, HeartbeatURL: env.Global.HeartbeatURL}
+		Redact: a.redact, HeartbeatURL: env.Global.HeartbeatURL, Limit: env.Limit}
 }

@@ -36,6 +36,9 @@ type Env struct {
 	// Notion makes the Notion client for a token: notion.New unless
 	// replaced in tests.
 	Notion func(token string) notion.API
+	// Limit pauses every agent pass while Claude's usage limit lasts; nil
+	// never pauses.
+	Limit *UsageLimit
 
 	botMu sync.Mutex
 	bot   *agent.Identity
@@ -44,9 +47,12 @@ type Env struct {
 	slots     chan struct{}
 }
 
-// acquireSlot waits for one of the concurrency agent slots shared by every
-// project in the process.
+// acquireSlot waits out a usage limit, then for one of the concurrency
+// agent slots shared by every project in the process.
 func (e *Env) acquireSlot(ctx context.Context) (release func(), err error) {
+	if err := e.Limit.Wait(ctx); err != nil {
+		return nil, err
+	}
 	e.slotsOnce.Do(func() {
 		n := 1
 		if e.Global != nil && e.Global.Concurrency > 0 {

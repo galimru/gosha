@@ -524,7 +524,7 @@ While a ticket is active (an agent running, or waiting for CI or the deploy), Go
 - A ticket canceled while Gosha wasn't watching it (Blocked, or while the daemon was down) is cleaned up the same way on the project's next pass, which checks every open run's ticket first.
 
 ### 8.11 Agent usage limits
-Claude's stream reports usage on every run as a `rate_limit_event` (`status`, `resetsAt`, and utilization of the five-hour and seven-day windows). A `status` other than `allowed`, or a failed result caused by the limit, means a usage limit: Gosha pauses **all** agent scheduling until `resetsAt` and then retries the same step. The ticket stays In Progress. This goes to Telegram (hit + resumed) and to the logs, never to Linear. Limit-related time doesn't count toward `agent.timeout`.
+Claude's stream reports usage on every run as a `rate_limit_event` (`status`, `resetsAt`, and utilization of the five-hour and seven-day windows). A `status` other than `allowed`, or a failed result caused by the limit, means a usage limit: Gosha pauses **all** agent scheduling, across projects (the Claude account is shared), until `resetsAt`, or for 15 minutes when Claude didn't say, and then retries the same step. The ticket stays In Progress. While paused, no project starts a pass, and a pickup that reaches an agent pass (e.g. after its CI finished) waits for the pause to end. The pause is recorded in `gosha.db`, so a restart keeps it, and `gosha status` shows it. It goes to Telegram once when it starts and once when it ends, whichever projects hit it, and to the logs, never to Linear. Limit-related time doesn't count toward `agent.timeout`.
 
 ## 9. Telegram alerts
 

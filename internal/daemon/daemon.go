@@ -24,9 +24,6 @@ const (
 	DefaultPoll      = 30 * time.Second
 	DefaultRescan    = time.Minute
 	DefaultCrashWait = 5 * time.Minute
-	// limitWait is how long a usage limit pauses when Claude didn't say
-	// when it resets.
-	limitWait = 15 * time.Minute
 )
 
 // PassFunc does one pickup pass for a project (pipeline.Env.Pass).
@@ -42,6 +39,9 @@ type Daemon struct {
 	Redact func(string) string
 	// HeartbeatURL, if set, is pinged every Poll while the daemon runs.
 	HeartbeatURL string
+	// Limit is the usage-limit pause shared by every project: no pass
+	// starts while it lasts.
+	Limit interface{ Until() time.Time }
 
 	// Poll is how often an idle project looks for Ready tickets, Rescan how
 	// often projects/ is checked for added or removed projects, and
@@ -158,10 +158,13 @@ func (d *Daemon) Supervise(ctx context.Context, name, only string) error {
 	log.Info("supervising")
 	crashed := false
 	for {
+		if err := d.waitLimit(ctx); err != nil {
+			log.Info("stopped")
+			return nil
+		}
 		handled, err := d.SafePass(ctx, name, only)
 		wait := d.poll()
 		var crash *CrashError
-		var le *agent.LimitError
 		var pe *pipeline.PausedError
 		switch {
 		case ctx.Err() != nil:
@@ -173,12 +176,8 @@ func (d *Daemon) Supervise(ctx context.Context, name, only string) error {
 			}
 			crashed = true
 			wait = d.crashWait()
-		case errors.As(err, &le):
-			wait = time.Until(le.ResetsAt)
-			if le.ResetsAt.IsZero() || wait <= 0 {
-				wait = limitWait
-			}
-			log.Warn("usage limit, pausing", "until", time.Now().Add(wait).Format(time.Kitchen))
+		case errors.As(err, new(*agent.LimitError)) && d.Limit != nil && !d.Limit.Until().IsZero():
+			continue // waits for the limit to reset
 		case errors.As(err, &pe):
 			log.Warn("project paused", "reason", d.redact(pe.Err.Error()))
 		case err != nil:
@@ -195,10 +194,23 @@ func (d *Daemon) Supervise(ctx context.Context, name, only string) error {
 			return nil
 		case <-time.After(wait):
 		}
-		if le != nil {
-			d.Notify.Send(notify.Event{Project: name, Text: "▶️ usage limit reset · resumed"})
+	}
+}
+
+// waitLimit waits while the usage-limit pause lasts.
+func (d *Daemon) waitLimit(ctx context.Context) error {
+	for d.Limit != nil {
+		until := d.Limit.Until()
+		if until.IsZero() {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Until(until) + time.Second):
 		}
 	}
+	return nil
 }
 
 // CrashError is a pass that panicked.
