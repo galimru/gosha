@@ -79,5 +79,5 @@ func (a *app) runCmd() *cobra.Command {
 func (a *app) daemon(env *pipeline.Env) *daemon.Daemon {
 	return &daemon.Daemon{Home: a.home, Pass: env.Pass, Notify: env.Notify, Log: a.log,
 		Redact: a.redact, HeartbeatURL: env.Global.HeartbeatURL, Limit: env.Limit,
-		Jobs: []func(context.Context){env.DigestLoop}}
+		Jobs: []func(context.Context){env.DigestLoop, env.PruneLoop}}
 }

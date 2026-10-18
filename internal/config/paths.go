@@ -108,6 +108,10 @@ func (p ProjectPaths) Runs() string    { return filepath.Join(p.Dir, "runs") }
 // gosha run).
 func (p ProjectPaths) RunLock() string { return filepath.Join(p.Dir, "run.lock") }
 
+// CleanupLock is held while workspaces are pruned, and by a pickup from
+// before it writes the ticket's workspace until its run is claimed.
+func (p ProjectPaths) CleanupLock() string { return filepath.Join(p.Dir, "cleanup.lock") }
+
 // Claude is the project's own CLAUDE_CONFIG_DIR: agent sessions persist
 // there for --resume, and the user's ~/.claude never applies (DESIGN §11.2).
 func (p ProjectPaths) Claude() string { return filepath.Join(p.Dir, "claude") }

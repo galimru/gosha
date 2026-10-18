@@ -344,7 +344,7 @@ func (h *harness) pickup(comments ...linear.Comment) error {
 	ctx, cancel := context.WithCancel(h.ctx)
 	defer cancel()
 	h.prs.stop, h.prs.stopped = cancel, false
-	err = h.env.handle(ctx, h.p, states, h.lin, h.prs, agent.Identity{Name: "goshabot[bot]", Email: "1+goshabot[bot]@users.noreply.github.com"}, h.kb, c)
+	err = h.env.handle(ctx, h.p, states, h.lin, h.prs, agent.Identity{Name: "goshabot[bot]", Email: "1+goshabot[bot]@users.noreply.github.com"}, h.kb, c, nil)
 	if h.prs.stopped && errors.Is(err, context.Canceled) {
 		return nil
 	}

@@ -135,7 +135,7 @@ internal/pipeline/    per-ticket state machine, limits, recovery
 internal/store/       SQLite persistence
 internal/service/     systemd and launchd units, service user, login-shell PATH
 internal/daemon/      supervisors, project scan, panic isolation, heartbeat, graceful shutdown
-internal/flock/       advisory file locks shared by every gosha process (run.lock, context.lock)
+internal/flock/       advisory file locks shared by every gosha process (run.lock, cleanup.lock, context.lock)
 ```
 
 **Tooling choices:**
@@ -167,7 +167,7 @@ telegram:
   digest_at: "09:00"           # daily digest, local time; empty disables it
 
 heartbeat_url: ""              # optional; GET every 30s, for an outside monitor (§9)
-retention: 30d                 # how long finished runs' transcripts and idle Blocked workspaces are kept (§11.3)
+retention: 30d                 # how long finished runs' files and idle Blocked workspaces are kept: 30d, 12h, … (§11.3)
 ```
 
 **Project discovery:** the projects Gosha manages are the directories under `~/.gosha/projects/` that contain a `repo/` clone. There's no separate list to keep in sync.
@@ -595,6 +595,8 @@ Everything lives in **one directory**, `~/.gosha` of the running user. `--home` 
         ├── claude/                          # CLAUDE_CONFIG_DIR for this project's agents (sessions)
         ├── context/                         # Notion mirror (INDEX.md + page tree)
         ├── context.lock                     # serialises refreshes and freezes
+        ├── run.lock                         # held by the one process running the project (§4)
+        ├── cleanup.lock                     # serialises cleanup with pickups
         └── runs/<ticket>/
             ├── <n>-<role>.jsonl             # full agent transcript (redacted); role is implement, review or address
             ├── <n>-settings.json            # generated agent settings
@@ -607,11 +609,12 @@ Everything lives in **one directory**, `~/.gosha` of the running user. `--home` 
 ```
 
 **Cleanup:**
-- A ticket's workspace is removed when its run ends: merged, canceled, or replaced by a restart after its PR was closed unmerged. A Blocked run keeps its workspace for `retention` (§5.1), then loses it; a resume rebuilds it (§8.2).
-- A finished run's `runs/<ticket>/` files (transcripts, settings, checks) are removed `retention` after the run ended. The run's row in `gosha.db` stays.
+- A ticket's workspace is removed when its run ends: delivered (right after the merge) or canceled. A run replaced in the same pickup (its PR was closed unmerged, or merged by hand) loses only its checkout, since the new run uses the same workspace.
+- A Blocked run keeps its workspace for `retention` (§5.1, `30d` by default; `d` or any Go duration such as `12h`), counted from the run's last update, then loses it; a resume rebuilds it (§8.2). A workspace left with no open run is removed once it's been untouched that long.
+- A ticket's `runs/<ticket>/` files (transcripts, settings, checks) are removed once it has no open run and its last run ended `retention` ago. The runs' rows in `gosha.db` stay.
+- The daemon applies these rules every hour. `gosha prune` applies them on demand (e.g. without a running daemon, or to free space now). Both take the project's `cleanup.lock`, which a pickup also holds from writing the ticket's workspace until its run is claimed, so a cleanup never removes a workspace a run is about to use, and it never touches an active run's workspace.
 - `gosha remove` removes a project's workspaces with it. A host move can skip `workspaces/`.
 - `gosha doctor` reports how much space `workspaces/` and `projects/*/runs/` take.
-- The daemon applies these rules on its own. `gosha prune` applies them on demand (e.g. without a running daemon, or to free space now). It never touches an active run's workspace, takes the same locks as the daemon's cleanup, and never deletes run records from `gosha.db`.
 
 The project's config is **not** in this tree; it's read from the repo (§5.2). `gosha config show <project>` prints the effective config (repo file + defaults).
 

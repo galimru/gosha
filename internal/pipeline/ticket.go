@@ -182,15 +182,22 @@ func (e *Env) Pass(ctx context.Context, name, only string) (bool, error) {
 		return false, err
 	}
 	e.resume(ctx, p)
-	kb, err := e.freezeContext(p, c.Issue.Identifier)
-	if err != nil {
-		return false, err
-	}
 	bot, err := e.botIdentity(ctx, p.Install)
 	if err != nil {
 		return false, err
 	}
-	return true, e.handle(ctx, p, lin.States, lin.Client, p.Install, bot, kb, *c)
+	// Held until the run is claimed, so a cleanup can't remove the
+	// workspace in between.
+	unlock, err := e.lockWorkspace(name)
+	if err != nil {
+		return false, err
+	}
+	kb, err := e.freezeContext(p, c.Issue.Identifier)
+	if err != nil {
+		unlock()
+		return false, err
+	}
+	return true, e.handle(ctx, p, lin.States, lin.Client, p.Install, bot, kb, *c, unlock)
 }
 
 // interrupted finds a run that stopped mid-step (usage limit, shutdown)
@@ -250,17 +257,26 @@ func (e *Env) botIdentity(ctx context.Context, inst *github.Installation) (agent
 
 // handle claims a ticket and runs it (DESIGN §8.1, §8.2). Failures after
 // the claim go Blocked, except a usage limit or a shutdown: those leave the
-// ticket In Progress and the run resumable.
-func (e *Env) handle(ctx context.Context, p *Project, st *linear.States, is issueOps, prs prOps, bot agent.Identity, kb tmpl.Context, c Candidate) error {
+// ticket In Progress and the run resumable. claimed, if set, is called
+// once the run is claimed (or the claim failed).
+func (e *Env) handle(ctx context.Context, p *Project, st *linear.States, is issueOps, prs prOps, bot agent.Identity, kb tmpl.Context, c Candidate, claimed func()) error {
 	t := &ticket{e: e, p: p, states: st, issues: is, prs: prs, bot: bot, kb: kb,
 		issue: c.Issue, comments: c.NewComments, run: c.OpenRun, prev: c.Delivered, report: &delivery{}, started: time.Now(),
 		fromReady: c.Issue.State.ID != st.InProgress.ID, resuming: c.OpenRun != nil, budget: p.Config.Agent.Timeout}
 	if t.run != nil {
 		t.report = loadReport(t.run)
 	}
+	release := func() {
+		if claimed != nil {
+			claimed()
+			claimed = nil
+		}
+	}
+	defer release()
 	if err := t.claim(ctx, c.Comments); err != nil {
 		return err
 	}
+	release()
 	wctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	stop := t.watch(wctx, cancel)

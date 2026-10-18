@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -16,6 +18,26 @@ type Global struct {
 	// HeartbeatURL is GET-pinged after every poll, so an outside monitor
 	// notices when Gosha stops (DESIGN §9). Optional.
 	HeartbeatURL string `yaml:"heartbeat_url"`
+	// RetentionText is how long finished runs' files and idle Blocked
+	// workspaces are kept ("30d" by default); Retention is it parsed.
+	RetentionText string        `yaml:"retention" default:"30d"`
+	Retention     time.Duration `yaml:"-"`
+}
+
+// ParseAge parses a duration that may also be in days: "30d", "12h", "90m".
+func ParseAge(s string) (time.Duration, error) {
+	if days, ok := strings.CutSuffix(s, "d"); ok {
+		n, err := strconv.Atoi(days)
+		if err != nil || n < 0 {
+			return 0, fmt.Errorf("invalid duration %q", s)
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("invalid duration %q", s)
+	}
+	return d, nil
 }
 
 type GlobalAgent struct {
@@ -63,6 +85,10 @@ func ParseGlobal(h Home, file string, data []byte) (*Global, error) {
 		g.Concurrency = 1
 	}
 	fe := func(field, msg string) error { return &FieldError{File: file, Field: field, Err: errors.New(msg)} }
+	var err error
+	if g.Retention, err = ParseAge(g.RetentionText); err != nil || g.Retention == 0 {
+		return nil, fe("retention", `must be a duration like "30d" or "12h"`)
+	}
 	switch {
 	case g.Concurrency < 0:
 		return nil, fe("concurrency", "must be at least 1")

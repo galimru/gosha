@@ -210,10 +210,11 @@ type Run struct {
 	// MergeSHA is the merge commit once Gosha has merged the PR.
 	MergeSHA string
 	// Report is the pipeline's JSON record of what to report on delivery.
-	Report    string
-	Outcome   string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Report     string
+	Outcome    string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	FinishedAt time.Time
 }
 
 // CreateRun records a new open run and sets its ID.
@@ -261,19 +262,19 @@ func (s *Store) FinishRun(ctx context.Context, id int64, outcome string) error {
 
 const runColumns = `id, project, ticket_id, mode, branch, pr_number, step, review_round, check_round, impl_session,
 	base_branch, pr_url, blocked_reason, blocked_at, agent_runs, reviewed_sha, review_id, review_result, last_reply,
-	checked_sha, checks_result, merge_sha, report, outcome, created_at, updated_at`
+	checked_sha, checks_result, merge_sha, report, outcome, created_at, updated_at, COALESCE(finished_at, '')`
 
 func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 	var r Run
-	var created, updated, blocked string
+	var created, updated, blocked, finished string
 	err := row.Scan(&r.ID, &r.Project, &r.TicketID, &r.Mode, &r.Branch, &r.PRNumber, &r.Step,
 		&r.ReviewRound, &r.CheckRound, &r.ImplSession, &r.BaseBranch, &r.PRURL, &r.BlockedReason, &blocked, &r.AgentRuns,
 		&r.ReviewedSHA, &r.ReviewID, &r.ReviewResult, &r.LastReply,
-		&r.CheckedSHA, &r.ChecksResult, &r.MergeSHA, &r.Report, &r.Outcome, &created, &updated)
+		&r.CheckedSHA, &r.ChecksResult, &r.MergeSHA, &r.Report, &r.Outcome, &created, &updated, &finished)
 	if err != nil {
 		return nil, err
 	}
-	r.CreatedAt, r.UpdatedAt, r.BlockedAt = parseTime(created), parseTime(updated), parseTime(blocked)
+	r.CreatedAt, r.UpdatedAt, r.BlockedAt, r.FinishedAt = parseTime(created), parseTime(updated), parseTime(blocked), parseTime(finished)
 	return &r, nil
 }
 
