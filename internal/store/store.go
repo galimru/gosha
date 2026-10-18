@@ -210,6 +210,16 @@ func (s *Store) OpenRun(ctx context.Context, project, ticketID string) (*Run, er
 	return r, err
 }
 
+// LastRun returns a ticket's newest run, open or finished, or nil.
+func (s *Store) LastRun(ctx context.Context, project, ticketID string) (*Run, error) {
+	r, err := scanRun(s.db.QueryRowContext(ctx, `SELECT `+runColumns+` FROM runs
+		WHERE project = ? AND ticket_id = ? ORDER BY id DESC LIMIT 1`, project, ticketID))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return r, err
+}
+
 // OpenRuns lists every unfinished run, for status.
 func (s *Store) OpenRuns(ctx context.Context) ([]*Run, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+runColumns+` FROM runs WHERE finished_at IS NULL ORDER BY project, id`)
