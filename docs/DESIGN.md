@@ -134,7 +134,7 @@ internal/daemon/      supervisors, scheduler, graceful shutdown
 **Tooling choices:**
 - **No `gh` CLI.** GitHub is accessed through its API from Go (`google/go-github`, with `bradleyfalzon/ghinstallation` for GitHub App tokens). That gives typed responses, automatic token refresh, conditional requests to save rate limit, and no command output to parse.
 - **The `git` CLI rather than go-git.** It has full merge and conflict support. The App token is passed in for each command and never stored.
-- **Host dependencies stay at two:** `git` (2.38 or newer, for `merge-tree --write-tree`) and `claude`. On Linux, Claude Code's sandbox also needs `bubblewrap` and `socat` (not yet verified, see [SPIKES.md](SPIKES.md#open-items)); `gosha doctor` checks for them.
+- **Host dependencies stay at two:** `git` (any version a supported OS ships) and `claude`. On Linux, Claude Code's sandbox also needs `bubblewrap` and `socat` (not yet verified, see [SPIKES.md](SPIKES.md#open-items)); `gosha doctor` checks for them.
 
 ## 5. Configuration
 
@@ -465,8 +465,8 @@ For the PR's **head SHA**:
 5. **After a fix:** if it committed, push, reply on the PR, and go back to review: a **re-review** of the fix. It only takes a `review.max_rounds` slot if it requests changes. Then checks run again on the new head. A fix that commits nothing goes **Blocked** with the implementer's explanation (e.g. a flaky test or an infrastructure problem).
 
 ### 8.5 Merge
-1. **Base sync:** fetch, and if `origin/<base>` isn't an ancestor of the branch, merge it in. Gosha does this in the bare clone with `git merge-tree --write-tree` and `git commit-tree` (as the bot identity), so it still never runs git in an agent's checkout. A clean merge is pushed and goes back to checks (no review: the PR's own change is the same). The ticket checkout is removed so the next agent pass starts from the merge commit.
-2. **Conflicts** are a check round: Gosha rebuilds the ticket checkout from the branch (a fresh clone, which carries the latest base), and the implementer runs `git merge origin/<base>`, resolves the conflicted files and commits the merge. Gosha checks that the base is now an ancestor of the branch (otherwise **Blocked**), pushes, and the change goes through re-review and checks.
+1. **Base sync:** fetch, and if `origin/<base>` isn't an ancestor of the branch (`git merge-base --is-ancestor`), ask GitHub to merge it in: `PUT /pulls/{n}/update-branch` with `expected_head_sha` set to the checked head. GitHub merges in the background, so Gosha polls the PR until its head changes (up to `checks.timeout`), fetches the new head into the bare clone, and goes back to checks (no review: the PR's own change is the same). The ticket checkout is removed so the next agent pass starts from the merge commit. If the head had moved, GitHub refuses, and the ticket goes **Blocked** as in step 3.
+2. **Conflicts** (GitHub answers 422) are a check round: Gosha rebuilds the ticket checkout from the branch (a fresh clone, which carries the latest base), and the implementer runs `git merge origin/<base>`, resolves the conflicts it reports and commits the merge. Gosha checks that the base is now an ancestor of the branch (otherwise **Blocked**), pushes, and the change goes through re-review and checks.
 3. **Merge** through the API with `github.merge_method` (squash by default), title `NXT-12: <title> (#<n>)`, **with `sha` = the head commit that was checked**. If anything was pushed after the checks ran, GitHub refuses the merge. Gosha only pushes after a check verdict through the steps above, so that push was someone else's: the ticket goes **Blocked** rather than merging code nobody checked.
 4. The merge commit is recorded at once, so a run that stops after merging finishes with cleanup and delivery on the next pass instead of being mistaken for a merge by hand.
 5. Delete the branch and remove the ticket's workspace, then watch the deploy (§8.7) or deliver (§8.8).
@@ -712,7 +712,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - `agent.timeout` is one budget per pickup, shared by every agent pass in it. (M3) It counts agent passes only, not waiting for CI. (M4)
 - Checks are waited for in-line; the ticket stays the project's active ticket meanwhile. A run is parked only while Blocked. (M4)
 - A fix for failed checks or conflicts goes back through review (a re-review that only takes a review round if it requests changes), then checks. (M4)
-- The base is merged into the branch in the bare clone (`git merge-tree`, git ≥ 2.38); conflicts are resolved by the implementer in a fresh checkout and count as a check round. (M4)
+- The base is merged into the branch by GitHub's update-branch API, so Gosha needs no particular git version (M7; in M4 it used `git merge-tree`, which needs git ≥ 2.38). Conflicts are resolved by the implementer in a fresh checkout and count as a check round. (M4)
 - Merges are pinned to the checked head; a push by anyone else after the checks blocks the ticket instead of being merged. (M4)
 - The Notion mirror is refreshed before every pickup and every 15 minutes when idle. Search detects changes; the tree comes from each page's child page blocks; only changed pages are fetched. Page bodies are cached with links as page ids, so renames and moves rewrite links without re-fetching. (M5)
 - Notion without access to the root page pauses the project; any other Notion failure uses the last mirror. Each pickup gets its own frozen copy in the ticket's workspace. (M5)

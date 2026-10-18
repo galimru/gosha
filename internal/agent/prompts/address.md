@@ -28,9 +28,7 @@ CI failed on the pull request. These are the failing checks, with the failing pa
 {{end}}{{if .Feedback.Conflicts}}
 # Merge conflicts
 
-`{{.BaseBranch}}` has moved on and no longer merges cleanly into this branch. Run `git merge origin/{{.BaseBranch}}`, resolve the conflicts so that both sides' intent is kept, run the tests, and commit the merge. Don't rebase. The conflicted files:
-
-{{.Feedback.Conflicts}}
+`{{.BaseBranch}}` has moved on and no longer merges cleanly into this branch. Run `git merge origin/{{.BaseBranch}}`, resolve the conflicts it reports so that both sides' intent is kept, run the tests, and commit the merge. Don't rebase.
 {{end}}{{if .Context.Dir}}
 # Project context
 

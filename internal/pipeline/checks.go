@@ -266,7 +266,7 @@ func (t *ticket) fix(ctx context.Context, fb tmpl.Feedback) error {
 	if err := t.save(ctx, StepFix); err != nil {
 		return err
 	}
-	if fb.Conflicts != "" {
+	if fb.Conflicts {
 		// A fresh checkout carries the latest base for the agent to merge.
 		if err := os.RemoveAll(t.checkout()); err != nil {
 			return err
@@ -279,7 +279,7 @@ func (t *ticket) fix(ctx context.Context, fb tmpl.Feedback) error {
 	}
 	summary := strings.TrimSpace(t.e.Redactor.Redact(res.Summary))
 	reply := fmt.Sprintf("**Check round %d: fixed.**\n\n", round)
-	if fb.Conflicts != "" {
+	if fb.Conflicts {
 		merged, err := t.p.Repo.IsAncestor(ctx, "refs/remotes/origin/"+t.run.BaseBranch, "refs/heads/"+t.run.Branch)
 		if err != nil {
 			return err

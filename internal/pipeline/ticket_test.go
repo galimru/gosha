@@ -76,8 +76,41 @@ type fakePRs struct {
 	deploys     func(call int, sha string) *github.WorkflowRun
 	deployCalls int
 	jobs        []github.Job
-	// titles and bodies of the PRs opened.
+	// titles and bodies of the PRs opened, and each PR's branch.
 	titles, bodies []string
+	branches       map[int]string
+	// upstream is the repo PRs are on; UpdateBranch merges main into a PR's
+	// branch there, as GitHub would.
+	upstream string
+	updates  int
+}
+
+func (f *fakePRs) UpdateBranch(_ context.Context, n int, head string) error {
+	f.updates++
+	branch := "refs/heads/" + f.branches[n]
+	git := func(args ...string) (string, error) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = f.upstream
+		cmd.Env = append(gitx.Env(""), "GIT_AUTHOR_NAME=gh", "GIT_AUTHOR_EMAIL=g@h", "GIT_COMMITTER_NAME=gh", "GIT_COMMITTER_EMAIL=g@h")
+		out, err := cmd.Output()
+		return strings.TrimSpace(string(out)), err
+	}
+	if cur, err := git("rev-parse", branch); err != nil || cur != head {
+		return github.ErrHeadMoved
+	}
+	tree, err := git("merge-tree", "--write-tree", branch, "refs/heads/main")
+	if err != nil {
+		return github.ErrConflict
+	}
+	commit, err := git("commit-tree", tree, "-p", branch, "-p", "refs/heads/main", "-m", "Merge main")
+	if err != nil {
+		return err
+	}
+	if _, err := git("update-ref", branch, commit); err != nil {
+		return err
+	}
+	f.prs[n].HeadSHA = commit
+	return nil
 }
 
 func (f *fakePRs) DeployRun(_ context.Context, _, sha, _ string) (*github.WorkflowRun, error) {
@@ -150,6 +183,7 @@ func (f *fakePRs) PR(_ context.Context, n int) (*github.PR, error) {
 func (f *fakePRs) CreatePR(_ context.Context, branch, base, title, body string) (*github.PR, error) {
 	f.titles, f.bodies = append(f.titles, title), append(f.bodies, body)
 	n := len(f.prs) + 1
+	f.branches[n] = branch
 	p := &github.PR{Number: n, URL: fmt.Sprintf("https://github.com/o/r/pull/%d", n), State: "open"}
 	f.prs[n] = p
 	return p, nil
@@ -268,7 +302,7 @@ func newHarness(t *testing.T, cfg string) *harness {
 	}
 	h := &harness{
 		t: t, ctx: ctx, upstream: up.dir,
-		lin: &fakeLinear{}, prs: &fakePRs{prs: map[int]*github.PR{}}, events: &recorder{},
+		lin: &fakeLinear{}, prs: &fakePRs{prs: map[int]*github.PR{}, branches: map[int]string{}, upstream: up.dir}, events: &recorder{},
 		p:     &Project{Name: "demo", Config: pc, Repo: repo, Base: "main", Commit: commit},
 		issue: linear.Issue{ID: "i-12", Identifier: "NXT-12", Number: 12, Title: "Add login", URL: "https://linear.app/x/NXT-12"},
 	}

@@ -2,7 +2,10 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 
 	gh "github.com/google/go-github/v88/github"
 )
@@ -77,6 +80,35 @@ func (i *Installation) ClosePR(ctx context.Context, number int) error {
 	_, _, err := i.api.PullRequests.Edit(ctx, i.Repo.Owner, i.Repo.Name, number, &gh.PullRequest{State: gh.Ptr("closed")})
 	if err != nil {
 		return fmt.Errorf("github close PR #%d: %w", number, err)
+	}
+	return nil
+}
+
+// ErrConflict means the base branch doesn't merge cleanly into the PR.
+var ErrConflict = errors.New("the base branch conflicts with the pull request")
+
+// UpdateBranch asks GitHub to merge the base into the PR's branch, as long
+// as its head is still head (DESIGN §8.5). GitHub merges in the
+// background: the PR's head changes once it's done. A head that moved is
+// ErrHeadMoved, and a conflict ErrConflict.
+func (i *Installation) UpdateBranch(ctx context.Context, number int, head string) error {
+	_, resp, err := i.api.PullRequests.UpdateBranch(ctx, i.Repo.Owner, i.Repo.Name, number,
+		&gh.PullRequestBranchUpdateOptions{ExpectedHeadSHA: gh.Ptr(head)})
+	var accepted *gh.AcceptedError
+	if errors.As(err, &accepted) {
+		return nil
+	}
+	if resp != nil && resp.StatusCode == http.StatusUnprocessableEntity {
+		msg := strings.ToLower(err.Error())
+		switch {
+		case strings.Contains(msg, "expected head sha"):
+			return fmt.Errorf("github update PR #%d: %w: %v", number, ErrHeadMoved, err)
+		case strings.Contains(msg, "conflict"):
+			return fmt.Errorf("github update PR #%d: %w: %v", number, ErrConflict, err)
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("github update PR #%d: %w", number, err)
 	}
 	return nil
 }

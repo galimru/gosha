@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/galimru/gosha/internal/config"
-	"github.com/galimru/gosha/internal/gitx"
 	"github.com/galimru/gosha/internal/notion"
 	"github.com/galimru/gosha/internal/pipeline"
 )
@@ -63,11 +62,6 @@ func (a *app) doctor(ctx context.Context, projects []string) []check {
 			add("fail", "%s: %v", tool, err)
 		} else {
 			add("ok", "%s: %s", tool, v)
-		}
-	}
-	if major, minor, err := gitx.Version(ctx); err == nil {
-		if want := gitx.MinVersion; major < want[0] || major == want[0] && minor < want[1] {
-			add("fail", "git %d.%d is too old: Gosha needs %d.%d or newer (merge-tree --write-tree)", major, minor, want[0], want[1])
 		}
 	}
 	if runtime.GOOS == "linux" {

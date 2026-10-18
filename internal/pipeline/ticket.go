@@ -69,6 +69,7 @@ type prOps interface {
 	Checks(ctx context.Context, sha string) ([]github.Check, error)
 	JobLog(ctx context.Context, jobID int64) (string, error)
 	Merge(ctx context.Context, number int, sha, method, title, message string) (string, error)
+	UpdateBranch(ctx context.Context, number int, head string) error
 	DeployRun(ctx context.Context, workflow, sha, branch string) (*github.WorkflowRun, error)
 	RunJobs(ctx context.Context, runID int64) ([]github.Job, error)
 }

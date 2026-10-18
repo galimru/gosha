@@ -218,9 +218,10 @@ func TestBaseMovedMergesCleanly(t *testing.T) {
 	if r.Outcome != OutcomeDelivered || len(shas) != 2 || h.prs.merged[0].sha != shas[1] || r.CheckRound != 0 {
 		t.Fatalf("run = %+v, checked %v, merged %+v", r, shas, h.prs.merged)
 	}
-	parents := gitIn(t, h.p.Repo.Dir, "log", "-1", "--format=%P %an", shas[1])
-	if len(strings.Fields(parents)) != 3 || !strings.HasSuffix(parents, "goshabot[bot]") {
-		t.Errorf("merge commit = %q", parents)
+	// GitHub merged main into the branch, and Gosha took its merge.
+	parents := gitIn(t, h.p.Repo.Dir, "log", "-1", "--format=%P", shas[1])
+	if len(strings.Fields(parents)) != 2 || h.prs.updates != 1 {
+		t.Errorf("merge commit parents %q, %d updates", parents, h.prs.updates)
 	}
 	if len(h.agent.calls) != 1 || len(h.prs.reviews) != 1 {
 		t.Errorf("%d impl calls, %d reviews: a clean base merge needs neither", len(h.agent.calls), len(h.prs.reviews))
@@ -262,7 +263,7 @@ func TestBaseConflictResolved(t *testing.T) {
 		t.Fatalf("run = %+v, %d impl calls, %d reviews", r, len(h.agent.calls), len(h.prs.reviews))
 	}
 	fix := h.agent.calls[1]
-	if !strings.Contains(fix.Prompt, "# Merge conflicts") || !strings.Contains(fix.Prompt, "- `login.go`") || fix.Resume != "" {
+	if !strings.Contains(fix.Prompt, "# Merge conflicts") || !strings.Contains(fix.Prompt, "git merge origin/main") || fix.Resume != "" {
 		t.Errorf("fix spec: resume %q, prompt %s", fix.Resume, fix.Prompt)
 	}
 	if !strings.Contains(h.prs.comments[0], "merged `main` and resolved the conflicts") {

@@ -3,7 +3,6 @@ package gitx
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os/exec"
 	"path"
 	"strings"
@@ -21,48 +20,11 @@ func (r *Repo) IsAncestor(ctx context.Context, a, b string) (bool, error) {
 	return err == nil, err
 }
 
-// Author is who a commit Gosha makes is authored and committed by.
-type Author struct{ Name, Email string }
-
-// MergeBase merges origin/<base> into the bare clone's branch without a
-// worktree (git merge-tree, git ≥ 2.38), so Gosha never runs git in an
-// agent's checkout (DESIGN §8.5). On conflicts the branch is left as it is
-// and the conflicted paths are returned.
-func (r *Repo) MergeBase(ctx context.Context, base, branch string, by Author) (conflicts []string, err error) {
-	theirs, ours := "refs/remotes/origin/"+base, "refs/heads/"+branch
-	// merge-tree exits 1 on a conflict, with the conflicted paths after the
-	// tree on stdout.
-	cmd := exec.CommandContext(ctx, "git", "merge-tree", "--write-tree", "--name-only", "--no-messages", ours, theirs)
-	cmd.Dir = r.Dir
-	cmd.Env = Env("")
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	var ee *exec.ExitError
-	if err != nil && errors.As(err, &ee) && ee.ExitCode() == 1 {
-		if len(lines) < 2 {
-			return nil, fmt.Errorf("merge %s into %s: conflict without paths", base, branch)
-		}
-		return lines[1:], nil
-	}
-	if err != nil {
-		return nil, &Error{Args: cmd.Args[1:], Stderr: stderr.String(), Err: err}
-	}
-	tree := lines[0]
-	cmd = exec.CommandContext(ctx, "git", "commit-tree", tree, "-p", ours, "-p", theirs,
-		"-m", fmt.Sprintf("Merge %s into %s", base, branch))
-	cmd.Dir = r.Dir
-	cmd.Env = append(Env(""),
-		"GIT_AUTHOR_NAME="+by.Name, "GIT_AUTHOR_EMAIL="+by.Email,
-		"GIT_COMMITTER_NAME="+by.Name, "GIT_COMMITTER_EMAIL="+by.Email)
-	cmd.Stderr = nil
-	commit, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("git commit-tree: %w", err)
-	}
-	_, err = r.git(ctx, "", "update-ref", ours, strings.TrimSpace(string(commit)))
-	return nil, err
+// TakeOrigin points the bare clone's branch at origin's, after GitHub
+// changed it (merging the base in, DESIGN §8.5) and it was fetched.
+func (r *Repo) TakeOrigin(ctx context.Context, branch string) error {
+	_, err := r.git(ctx, "", "update-ref", "refs/heads/"+branch, "refs/remotes/origin/"+branch)
+	return err
 }
 
 // HasCIWorkflows reports whether .github/workflows/ at ref has a workflow
@@ -119,25 +81,4 @@ func RunsOnPR(data []byte) bool {
 		}
 	}
 	return false
-}
-
-// MinVersion is the oldest git Gosha works with: MergeBase needs
-// `merge-tree --write-tree`.
-var MinVersion = [2]int{2, 38}
-
-// Version returns the installed git's major and minor version.
-func Version(ctx context.Context) (major, minor int, err error) {
-	out, err := run(ctx, "", "", "--version")
-	if err != nil {
-		return 0, 0, err
-	}
-	// "git version 2.54.0 (Apple Git-157)"
-	f := strings.Fields(string(out))
-	if len(f) < 3 {
-		return 0, 0, fmt.Errorf("unexpected git --version output %q", out)
-	}
-	if _, err := fmt.Sscanf(f[2], "%d.%d", &major, &minor); err != nil {
-		return 0, 0, fmt.Errorf("unexpected git --version output %q", out)
-	}
-	return major, minor, nil
 }

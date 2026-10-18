@@ -22,19 +22,6 @@ Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejec
 
 **Why rejected:** checks always come last, so a shared budget lets a long review loop use up the rounds CI needs, and one flaky test then blocks a PR that was nearly done. The two loops also fail differently (review: no agreement; CI: a failure the agent can't fix), so they need different limits. `agent.timeout` already caps the total cost.
 
-## 7. Base sync through GitHub
-
-**Status:** agreed
-
-**Today (§8.5):** the base is merged in the bare clone with `git merge-tree --write-tree` and `git commit-tree`, which needs git ≥ 2.38. Ubuntu 22.04 LTS ships 2.34 and Debian 11 ships 2.30, so `gosha doctor` fails on those hosts.
-
-**Change:** when the PR is behind, call `PUT /pulls/{n}/update-branch` (with `expected_head_sha`), fetch the new head into the bare clone and re-run checks. On a conflict (422), run the implementer in a fresh checkout as today. The pinned-SHA merge stays. The git version floor goes away (`merge-base --is-ancestor` works on any git).
-
-**Trade-offs:**
-- The API is asynchronous: Gosha polls until the PR head changes.
-- A conflict comes back without a file list, so `.Feedback.Conflicts` goes away; the implementer finds the conflicts when it runs `git merge`.
-- It rewrites working M4 code; the gain is host compatibility, not less code.
-
 ## 8. Simpler expected checks
 
 **Status:** agreed
