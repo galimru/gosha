@@ -44,6 +44,9 @@ type Spec struct {
 	// DisallowedTools are removed from the agent, whatever the permission
 	// mode: the reviewer can't edit (DESIGN §7.1).
 	DisallowedTools []string
+	// AddDirs are extra directories the agent may use beyond Dir: the
+	// run's frozen project context (read-only through the settings).
+	AddDirs []string
 	// Env.
 	OAuthToken string
 	ConfigDir  string // CLAUDE_CONFIG_DIR
@@ -73,6 +76,9 @@ func (s Spec) args() []string {
 	}
 	if len(s.DisallowedTools) > 0 {
 		args = append(args, "--disallowedTools", strings.Join(s.DisallowedTools, ","))
+	}
+	for _, d := range s.AddDirs {
+		args = append(args, "--add-dir", d)
 	}
 	return args
 }

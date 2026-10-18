@@ -101,6 +101,13 @@ func TestRunModes(t *testing.T) {
 	}
 }
 
+func TestAddDirs(t *testing.T) {
+	args := strings.Join(Spec{AddDirs: []string{"/h/runs/X-1/context"}}.args(), " ")
+	if !strings.Contains(args, "--add-dir /h/runs/X-1/context") {
+		t.Errorf("args = %s", args)
+	}
+}
+
 func TestRunFailures(t *testing.T) {
 	cases := map[string]struct {
 		body  string
