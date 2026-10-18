@@ -42,7 +42,7 @@ func TestDeployWatched(t *testing.T) {
 	if h.onUpstream(r.Branch) {
 		t.Error("branch not deleted")
 	}
-	for _, want := range []string{"**Deployment**", "✅ `deploy.yml` success: https://run/5", "- https://demo.example.com"} {
+	for _, want := range []string{"**Deploy:** ✅ `deploy.yml` success · [run](https://run/5) · https://demo.example.com"} {
 		if !strings.Contains(h.lin.comments[0], want) {
 			t.Errorf("Delivered comment missing %q:\n%s", want, h.lin.comments[0])
 		}
@@ -65,7 +65,7 @@ func TestDeployFailureDeliversThenFollowsUp(t *testing.T) {
 		t.Fatalf("run = %+v, linear %+v", first, h.lin)
 	}
 	c := h.lin.comments[0]
-	for _, want := range []string{"❌ `deploy.yml` failure: https://run/5", "**ship** (failure)", "missing DEPLOY_ENV", "for a follow-up"} {
+	for _, want := range []string{"**Deploy:** ❌ `deploy.yml` failure · [run](https://run/5)", "**ship** (failure)", "missing DEPLOY_ENV", "for a follow-up"} {
 		if !strings.Contains(c, want) {
 			t.Errorf("Delivered comment missing %q:\n%s", want, c)
 		}

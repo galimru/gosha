@@ -32,10 +32,6 @@ func (t *ticket) merge(ctx context.Context) error {
 	if !current {
 		return t.syncBase(ctx)
 	}
-	diff, err := t.p.Repo.Diff(ctx, t.run.BaseBranch, t.run.Branch)
-	if err != nil {
-		return err
-	}
 	title := fmt.Sprintf("%s: %s (#%d)", t.issue.Identifier, t.issue.Title, t.run.PRNumber)
 	sha, err := t.prs.Merge(ctx, t.run.PRNumber, t.run.CheckedSHA, t.p.Config.GitHub.MergeMethod, title, "Ticket: "+t.issue.URL)
 	switch {
@@ -48,7 +44,6 @@ func (t *ticket) merge(ctx context.Context) error {
 		return err
 	}
 	t.run.MergeSHA = sha
-	t.report.Diff = diff.String()
 	if err := t.save(ctx, StepMerge); err != nil {
 		return err
 	}
@@ -130,7 +125,6 @@ func (t *ticket) conflicts(ctx context.Context, head string) error {
 			t.run.BaseBranch, limit), nil)
 	}
 	fb := tmpl.Feedback{Conflicts: true}
-	t.report.Fixes = append(t.report.Fixes, fmt.Sprintf("Conflicts with `%s` → resolved by the implementer", t.run.BaseBranch))
 	if err := t.recordFailure(ctx, head, fb); err != nil {
 		return err
 	}

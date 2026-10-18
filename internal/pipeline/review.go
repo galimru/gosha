@@ -113,7 +113,6 @@ func (t *ticket) review(ctx context.Context) (*agent.ReviewerResult, error) {
 			return nil, err
 		}
 		t.run.ReviewID, t.run.ReviewRound = id, round
-		t.report.addReview(t.roundLabel(round, limit), res)
 		if err := t.save(ctx, StepReview); err != nil {
 			return nil, err
 		}

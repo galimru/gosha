@@ -63,9 +63,15 @@ func TestChecksGreenMerges(t *testing.T) {
 	if h.lin.state() != states.InReview.ID || len(h.lin.comments) != 1 {
 		t.Fatalf("linear = %+v", h.lin)
 	}
-	for _, want := range []string{"**Delivered:** [PR #1]", "+1 −0 in 1 files", "Added login.", "Checks passed: `test`", "Review: review 1/3 ✅", "Verification: go test", "**Assumptions**\n- email only"} {
+	for _, want := range []string{"**Delivered:** [PR #1]", "Added login.", "**Assumptions**\n- email only"} {
 		if !strings.Contains(h.lin.comments[0], want) {
 			t.Errorf("Delivered comment missing %q:\n%s", want, h.lin.comments[0])
+		}
+	}
+	// Reviews, checks and verification are on the PR, not repeated here.
+	for _, not := range []string{"Review", "Checks", "Verification", "Deploy"} {
+		if strings.Contains(h.lin.comments[0], not) {
+			t.Errorf("Delivered comment has %q:\n%s", not, h.lin.comments[0])
 		}
 	}
 	ev := strings.Join(h.events.take(), "\n")
@@ -86,9 +92,6 @@ func TestNoChecksAppear(t *testing.T) {
 	// It waits out start_grace, then nothing appearing is a pass.
 	if r := h.lastRun(); r.Outcome != OutcomeDelivered || h.prs.checkCalls < 2 {
 		t.Errorf("run = %+v, %d check calls", r, h.prs.checkCalls)
-	}
-	if !strings.Contains(h.lin.comments[0], "Checks: none appeared") {
-		t.Errorf("comment = %s", h.lin.comments[0])
 	}
 }
 

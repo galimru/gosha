@@ -85,11 +85,10 @@ State names default to the ones above (`Ready`, `In Progress`, `In Review`, `Blo
 
 - **PR link:** added as a Linear *attachment* on the ticket (not a comment), so it shows up as a link card.
 - **Blocked comment:** what step it was on, what went wrong in plain words, what it needs from you, and links.
-- **Delivered comment** (moving to In Review):
+- **Delivered comment** (moving to In Review), short on purpose; reviews, fixes and checks are on the PR:
+   - the PR link and merge commit
    - a 2–4 line summary of what changed and why (the implementer's first summary)
-   - the PR link and diff size
-   - how it was checked: what the implementer ran, each review round with its findings (and that they were addressed), check and conflict fix rounds, the checks that passed
-   - deployment, if configured: ✅ or ❌ with the workflow run, and for a failure the failing step
+   - the deploy, if configured: ✅ or ❌ with a link to the workflow run, and for a failure the failing step
    - assumptions made, and anything deliberately left out (the implementer's `assumptions` and `left_out`, from every pass)
 
   What it reports is recorded on the run as the pipeline goes, so a delivery that resumes after a restart still has all of it.
@@ -718,7 +717,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - Pages linked from tickets but outside the tree (`_linked/`) are deferred. (M5)
 - A ticket whose last PR was merged (by Gosha or by hand) is a follow-up when it's Ready again: a new branch, and the implementer is told about the earlier PR. A follow-up with no new human comment goes Blocked without running an agent. (M6)
 - The deploy is found by the merge commit's `head_sha` on the base. (M6) A failed deploy is reported (❌) in the Delivered comment rather than blocking the ticket; a follow-up fixes it. (M7)
-- The Delivered comment's contents are recorded on the run as they're gathered (implementer results, each posted review, fix rounds, checks, diff, deploy). The implementer result has an optional `left_out` list. (M6)
+- The Delivered comment's contents are recorded on the run as they're gathered. The implementer result has an optional `left_out` list. (M6) The comment holds only the summary, PR link, assumptions, left out and deploy line; the rest is on the PR. (M7)
 - Ticket comments written during a pickup reach its next implementer pass. (M6) There's no `/restart` command: closing the PR on GitHub and moving the ticket to Ready starts over. (M7)
 - `gosha validate` is an offline check of a repo's config, so it can run in the project's CI; `gosha doctor` checks everything about the host, including credentials, Linear and Notion. (M7)
 - Without `checks.required`, whatever checks appear within `start_grace` must pass, and none appearing is a pass; Gosha doesn't parse workflow triggers. (M7)

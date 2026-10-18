@@ -37,11 +37,3 @@ Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejec
 **Today (§6.2):** refresh before every pickup, every 15 minutes while idle, and on every poll while paused.
 
 **Change:** refresh only at pickup; a Notion pause is retried at the next pickup. Prefer a full refetch over rename bookkeeping where they conflict. The markdown mirror itself stays: agents work best with files they can grep, every pass sees the same frozen copy, and no Notion token reaches the agent.
-
-## 16. Shorter Delivered comment
-
-**Status:** agreed
-
-**Today (§3):** lists every review round, fix round and check, gathered incrementally into `runs.report`.
-
-**Change:** summary, PR link, assumptions/`left_out` and the deploy line. The rest is on the PR.
