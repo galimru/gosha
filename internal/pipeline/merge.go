@@ -57,13 +57,13 @@ func (t *ticket) merge(ctx context.Context) error {
 		return err
 	}
 	t.run.MergeSHA = sha
+	t.report.Diff = diff.String()
 	if err := t.save(ctx, StepMerge); err != nil {
 		return err
 	}
-	t.diff = &diff
 	t.e.Log.Info("merged", "project", t.p.Name, "ticket", t.issue.Identifier, "pr", t.run.PRURL, "sha", sha)
 	t.notify(fmt.Sprintf("%s · %s-merged %.7s", t.issue.Identifier, t.p.Config.GitHub.MergeMethod, sha), t.prLink())
-	return t.deliver(ctx)
+	return t.afterMerge(ctx)
 }
 
 // syncBase merges the moved base into the branch in the bare clone. A
@@ -103,65 +103,10 @@ func (t *ticket) syncBase(ctx context.Context) error {
 		list.WriteString("- `" + c + "`\n")
 	}
 	fb := tmpl.Feedback{Conflicts: strings.TrimSpace(list.String())}
+	t.report.Fixes = append(t.report.Fixes, fmt.Sprintf("Conflicts with `%s` in %d files → resolved by the implementer", t.run.BaseBranch, len(conflicts)))
 	if err := t.recordFailure(ctx, head, fb); err != nil {
 		return err
 	}
 	t.notify(fmt.Sprintf("%s · conflicts with %s in %d files → resolving %d/%d", t.issue.Identifier, t.run.BaseBranch, len(conflicts), t.run.CheckRound, limit), t.prLink())
 	return t.fix(ctx, fb)
-}
-
-// deliver cleans up after the merge, reports on the ticket and moves it to
-// In Review. Until M6 the report is short and there's no deploy watch.
-func (t *ticket) deliver(ctx context.Context) error {
-	tok, err := t.prs.Token(ctx)
-	if err != nil {
-		return err
-	}
-	if err := t.p.Repo.DeleteBranch(ctx, tok, t.run.Branch); err != nil {
-		return err
-	}
-	if err := os.RemoveAll(t.checkout()); err != nil {
-		return err
-	}
-	if _, err := t.issues.CreateComment(ctx, t.issue.ID, t.deliveredComment()); err != nil {
-		return err
-	}
-	if err := t.issues.Transition(ctx, t.issue.ID, t.states.InReview.ID); err != nil {
-		return err
-	}
-	if err := t.e.Store.FinishRun(ctx, t.run.ID, OutcomeDelivered); err != nil {
-		return err
-	}
-	t.e.Log.Info("delivered", "project", t.p.Name, "ticket", t.issue.Identifier)
-	t.notify(fmt.Sprintf("%s · ✅ delivered · In Review", t.issue.Identifier), t.ticketLink(), t.prLink())
-	return nil
-}
-
-func (t *ticket) deliveredComment() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "**Delivered:** [PR #%d](%s) is merged (`%.7s`)", t.run.PRNumber, t.run.PRURL, t.run.MergeSHA)
-	if t.diff != nil {
-		fmt.Fprintf(&b, " · %s", t.diff)
-	}
-	b.WriteString(".\n")
-	if s := strings.TrimSpace(t.summary); s != "" {
-		b.WriteString("\n" + t.e.Redactor.Redact(s) + "\n")
-	}
-	b.WriteString("\n**How it was checked**\n")
-	fmt.Fprintf(&b, "- Review: %d round(s) by Gosha's reviewer", max(t.run.ReviewRound, 1))
-	if t.run.CheckRound > 0 {
-		fmt.Fprintf(&b, ", %d check fix round(s)", t.run.CheckRound)
-	}
-	b.WriteString("\n")
-	if len(t.passed) > 0 {
-		var names []string
-		for _, c := range t.passed {
-			names = append(names, c.Name)
-		}
-		b.WriteString("- Checks passed: " + codeList(names) + "\n")
-	} else if t.run.CheckedSHA != "" {
-		b.WriteString("- Checks: none expected\n")
-	}
-	b.WriteString("\nMove the ticket to Done once you've accepted it, or comment what's wrong and move it to Ready for a follow-up.\n")
-	return b.String()
 }

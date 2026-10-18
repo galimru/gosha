@@ -1,5 +1,5 @@
-// Package pipeline is the per-ticket pipeline (DESIGN §8). As of M4 it
-// takes a ticket from Ready to a merged PR with green checks.
+// Package pipeline is the per-ticket pipeline (DESIGN §8): it takes a
+// ticket from Ready to merged, deployed and reported In Review.
 package pipeline
 
 import (
@@ -38,6 +38,9 @@ type Candidate struct {
 	// NewComments are human comments since Gosha's last run on the ticket.
 	NewComments []linear.Comment
 	OpenRun     *store.Run
+	// Delivered is the ticket's last run whose PR was merged, if any: a new
+	// run on it is a follow-up.
+	Delivered *store.Run
 }
 
 // Decision is pickup's verdict on one ticket.
@@ -111,6 +114,10 @@ func mode(p *config.Project, c Candidate) (mode, branch string) {
 		return ModeResume + " (address)", c.OpenRun.Branch
 	case c.OpenRun != nil:
 		return ModeResume + " (review)", c.OpenRun.Branch
+	case c.Delivered != nil && len(instructions(c.NewComments)) == 0:
+		m = ModeFollowUp + ", blocked: no comment says what to change"
+	case c.Delivered != nil:
+		m = ModeFollowUp
 	}
 	branch, err := p.BranchName(Ticket(c.Issue, nil))
 	if err != nil {
@@ -129,6 +136,24 @@ func HasRestart(cs []linear.Comment) bool {
 		}
 	}
 	return false
+}
+
+// instructions are the comments as the agent gets them: `/restart` lines
+// are commands to Gosha, not instructions, and are left out.
+func instructions(cs []linear.Comment) []linear.Comment {
+	var out []linear.Comment
+	for _, c := range cs {
+		var keep []string
+		for _, line := range strings.Split(c.Body, "\n") {
+			if strings.TrimSpace(line) != "/restart" {
+				keep = append(keep, line)
+			}
+		}
+		if c.Body = strings.TrimSpace(strings.Join(keep, "\n")); c.Body != "" {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // NewHumanComments keeps human comments posted after the cursor.
@@ -150,7 +175,7 @@ func Ticket(is linear.Issue, comments []linear.Comment) tmpl.Ticket {
 		ID: is.Identifier, Team: team, Number: is.Number, Title: is.Title,
 		Description: is.Description, URL: is.URL,
 	}
-	for _, c := range comments {
+	for _, c := range instructions(comments) {
 		t.Comments = append(t.Comments, tmpl.Comment{Author: c.Author, Body: c.Body})
 	}
 	return t

@@ -19,6 +19,7 @@ type Data struct {
 	BaseBranch string
 	Diff       string
 	Feedback   Feedback
+	FollowUp   FollowUp
 	Round      int
 	ResultFile string
 }
@@ -53,6 +54,18 @@ type Feedback struct {
 	// Previous is the last round's review and the implementer's reply
 	// (review, from round 2).
 	Previous string
+}
+
+// FollowUp is the earlier, merged pull request of a ticket that a human
+// sent back to Ready (implement, on follow-up runs; zero otherwise).
+type FollowUp struct {
+	PR       int
+	URL      string
+	MergeSHA string
+	// Summary is what the earlier change did, and Deploy how its deploy
+	// went, when one was watched.
+	Summary string
+	Deploy  string
 }
 
 // SlugMax is the length limit of the template `slug` function.

@@ -1,6 +1,6 @@
 # Gosha — Design
 
-> Status: **agreed plan**, implemented up to M4 (checks & merge). Implementation order: [ROADMAP.md](ROADMAP.md). Assumptions checked in M0: [SPIKES.md](SPIKES.md).
+> Status: **agreed plan**, implemented up to M6 (deliver). Implementation order: [ROADMAP.md](ROADMAP.md). Assumptions checked in M0: [SPIKES.md](SPIKES.md).
 
 ## 1. Overview
 
@@ -86,11 +86,13 @@ State names default to the ones above (`Ready`, `In Progress`, `In Review`, `Blo
 - **PR link:** added as a Linear *attachment* on the ticket (not a comment), so it shows up as a link card.
 - **Blocked comment:** what step it was on, what went wrong in plain words, what it needs from you, and links.
 - **Delivered comment** (moving to In Review):
-   - a 2–4 line summary of what changed and why
+   - a 2–4 line summary of what changed and why (the implementer's first summary)
    - the PR link and diff size
-   - how it was checked: which tests and checks ran, the reviewer's findings and how they were resolved
+   - how it was checked: what the implementer ran, each review round with its findings (and that they were addressed), check and conflict fix rounds, the checks that passed
    - deployment: workflow result + URL, if configured
-   - assumptions made, and anything deliberately left out
+   - assumptions made, and anything deliberately left out (the implementer's `assumptions` and `left_out`, from every pass)
+
+  What it reports is recorded on the run as the pipeline goes, so a delivery that resumes after a restart still has all of it.
 
 Everything else (pickup, progress, review rounds, usage limits, errors) goes to Telegram (§9).
 
@@ -252,6 +254,7 @@ The binary embeds default templates, and any file present in the repo overrides 
 | `.Feedback.Review` / `.Feedback.CI` | review comments and human PR feedback / failed checks with the failing step of each job log | address |
 | `.Feedback.Conflicts` | files that conflict with the base, as a list | address |
 | `.Feedback.Previous` | the last round's findings and the implementer's reply | review (from round 2) |
+| `.FollowUp.PR` / `.URL` / `.MergeSHA` / `.Summary` / `.Deploy` | the ticket's earlier, merged PR: number, link, merge commit, what it did, how its deploy went; empty unless this is a follow-up | implement |
 | `.Round` | `2` | review, address |
 | `.ResultFile` | path for the result JSON | prompts |
 
@@ -418,6 +421,7 @@ Implementer:
   "summary": "what changed and why",
   "verification": "what was run",
   "assumptions": ["..."],
+  "left_out": ["what the ticket could be read to ask for but wasn't done, and why"],
   "blocked_reason": "...", "questions": ["..."] }
 ```
 
@@ -453,8 +457,11 @@ All of them go through the same **address** step (`address.md`, data in `.Feedba
 5. Decide the mode:
    - `/restart` in the new comments → close the PR, delete the branch → **fresh**
    - an open Gosha PR exists → **resume**: the round limit resets; new ticket comments or new human PR feedback go to an **address** pass first, otherwise the PR gets a fresh review (§8.3)
-   - a merged PR exists (follow-up) → new branch with suffix `-2`, `-3`, … → **fresh**
+   - the ticket's last PR was merged, by Gosha or by hand → **follow-up**: a fresh run on a new branch with suffix `-2`, `-3`, …, whose implementer is told about the earlier PR (`.FollowUp`) and that the new comments say what to change. A follow-up with no new human comment goes **Blocked** at once, asking what to change; no agent runs.
+   - a run Blocked after its merge (the deploy failed): with new comments → finish that run and start a **follow-up**; without → look at the deploy again (§8.7)
    - otherwise → **fresh**
+
+   `/restart` lines are commands to Gosha: they're left out of the comments agents get. Ticket comments posted while Gosha works on the ticket are added to the instructions of the next implementer pass in the same pickup.
 
 ### 8.2 Implement
 1. Refresh the project context and freeze a copy for the run (§6.2).
@@ -505,7 +512,7 @@ For the PR's **head SHA**:
 3. **Conflicts** are a check round: Gosha rebuilds the ticket checkout from the branch (a fresh clone, which carries the latest base), and the implementer runs `git merge origin/<base>`, resolves the conflicted files and commits the merge. Gosha checks that the base is now an ancestor of the branch (otherwise **Blocked**), pushes, and the change goes through re-review and checks.
 4. **Merge** through the API with `github.merge_method` (squash by default), title `NXT-12: <title> (#<n>)`, **with `sha` = the head commit that was checked**. If anything was pushed after the checks ran, GitHub refuses the merge. Gosha only pushes after a check verdict through the steps above, so that push was someone else's: the ticket goes **Blocked** rather than merging code nobody checked.
 5. The merge commit is recorded at once, so a run that stops after merging finishes with cleanup and delivery on the next pass instead of being mistaken for a merge by hand.
-6. Delete the branch and remove the checkout.
+6. Delete the branch and remove the checkout, then watch the deploy (§8.7) or deliver (§8.8).
 
 ### 8.6 Identities
 
@@ -531,9 +538,12 @@ For the PR's **head SHA**:
 - `gosha auth linear` checks the credentials and shows which actor Gosha acts as.
 
 ### 8.7 Deploy watch (if configured)
-Find the `deploy.workflow` run for the merge commit on the base branch and wait for it to finish (up to `deploy.timeout`).
+Find the newest run of the `deploy.workflow` file for the merge commit (`head_sha`) on the base branch, polling every ~15s, and wait for it to finish (up to `deploy.timeout`). Like waiting for checks, this doesn't spend `agent.timeout`. A re-run keeps the run's id, so the newest attempt is what counts.
 - Success → report the result + URL in the Delivered comment.
-- Failure → **Blocked** with a summary of the failure. The code is already merged, so a human needs to see this.
+- Failure → **Blocked** with the failed jobs and the failing step of each job's log (as for checks, §8.4). The code is already merged, so a human needs to see this.
+- No run within `deploy.timeout`, or still running → **Blocked**, naming the workflow and the merge commit.
+- **Ready again:** with no new comment, Gosha looks at the deploy again (a human may have fixed or re-run it): success → deliver, still failing → Blocked again. With a comment, it's a follow-up PR on the merged code (§8.1), and the implementer is shown the failure.
+- `gosha validate` warns when `.github/workflows/<deploy.workflow>` isn't on the default branch.
 
 ### 8.8 Deliver
 Post the **Delivered** comment, move the ticket to In Review, and notify Telegram. The run is complete.
@@ -568,7 +578,7 @@ A Telegram bot posts Gosha's activity to a **private channel**. All projects sha
 | address pass | `NXT-12 · addressed 5 comments` |
 | checks | `NXT-12 · checks ✅ 4/4` / `❌ test (go 1.27)` → fixing 1/3 |
 | merged | `NXT-12 · squash-merged a1b2c3d` |
-| deploy | `NXT-12 · deploy ✅ https://…` |
+| deploy | `NXT-12 · deploy ✅ https://…` / `deploy ❌ failure` |
 | delivered / blocked | the outcome + a link to the Linear ticket |
 | usage limit | `⏸ Claude usage limit, resuming ~14:30` / `▶️ resumed` |
 | paused / canceled by human | `NXT-12 · moved to Backlog, stopped` |
@@ -750,3 +760,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - Notion without access to the root page pauses the project; any other Notion failure uses the last mirror. Each pickup gets its own frozen copy at `runs/<ticket>/context/`. (M5)
 - A project resumes only after the config, Linear and Notion checks all pass, so a pause for one reason isn't cleared by another check passing. (M5)
 - Pages linked from tickets but outside the tree (`_linked/`) are deferred. (M5)
+- A ticket whose last PR was merged (by Gosha or by hand) is a follow-up when it's Ready again: a new branch, and the implementer is told about the earlier PR. A follow-up with no new human comment goes Blocked without running an agent. (M6)
+- The deploy is found by the merge commit's `head_sha` on the base. A failed deploy goes Blocked; Ready without a comment looks at the deploy again, Ready with a comment opens a follow-up. (M6)
+- The Delivered comment's contents are recorded on the run as they're gathered (implementer results, each posted review, fix rounds, checks, diff, deploy). The implementer result has an optional `left_out` list. (M6)
+- `/restart` lines aren't passed to agents, and ticket comments written during a pickup reach its next implementer pass. (M6)

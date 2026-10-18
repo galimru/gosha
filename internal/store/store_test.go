@@ -192,3 +192,33 @@ func TestMigrateFromM2(t *testing.T) {
 		t.Fatalf("migrated run = %+v, %v", got, err)
 	}
 }
+
+func TestLastDelivered(t *testing.T) {
+	ctx := context.Background()
+	s, _ := open(t)
+	if r, err := s.LastDelivered(ctx, "p", "NXT-1"); err != nil || r != nil {
+		t.Fatalf("no delivered run expected: %v %v", r, err)
+	}
+	first := &Run{Project: "p", TicketID: "NXT-1", Mode: "fresh"}
+	if err := s.CreateRun(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	first.Report = `{"summary":"done"}`
+	if err := s.UpdateRun(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishRun(ctx, first.ID, OutcomeDelivered); err != nil {
+		t.Fatal(err)
+	}
+	restarted := &Run{Project: "p", TicketID: "NXT-1", Mode: "fresh (restart)"}
+	if err := s.CreateRun(ctx, restarted); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.FinishRun(ctx, restarted.ID, "restarted"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.LastDelivered(ctx, "p", "NXT-1")
+	if err != nil || got == nil || got.ID != first.ID || got.Report != first.Report {
+		t.Fatalf("LastDelivered = %+v, %v", got, err)
+	}
+}

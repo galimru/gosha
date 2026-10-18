@@ -54,6 +54,9 @@ func (e *Env) candidates(ctx context.Context, name string, lin *Linear, ticket s
 		if c.OpenRun, err = e.Store.OpenRun(ctx, name, is.Identifier); err != nil {
 			return nil, err
 		}
+		if c.Delivered, err = e.Store.LastDelivered(ctx, name, is.Identifier); err != nil {
+			return nil, err
+		}
 		cur, err := e.Store.CommentCursor(ctx, name, is.Identifier)
 		if err != nil {
 			return nil, err

@@ -58,6 +58,7 @@ Write your result as JSON to `{{.ResultFile}}` (outside the repository), with ex
   "summary": "what you changed for each piece of feedback, and what you deliberately didn't change and why",
   "verification": "what you ran to check it (tests, build, lint) and the outcome",
   "assumptions": ["anything you assumed that the ticket didn't say"],
+  "left_out": ["anything the ticket could be read to ask for that you deliberately didn't do, and why"],
   "blocked_reason": "only when blocked: what stops you, in plain words",
   "questions": ["only when blocked: what a human needs to answer"]
 }
