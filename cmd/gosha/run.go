@@ -23,8 +23,8 @@ func (a *app) runCmd() *cobra.Command {
 		Use:   "run <project>",
 		Short: "Run one project in the foreground",
 		Long: "Run one project in the foreground, for development and prompt tuning: pick up Ready\n" +
-			"tickets one at a time and take each to a reviewed pull request (M3). Ctrl-C stops the agent\n" +
-			"and leaves the ticket In Progress; the next run continues it.\n\n" +
+			"tickets one at a time and take each to a merged pull request with green checks (M4).\n" +
+			"Ctrl-C stops the agent and leaves the ticket In Progress; the next run continues it.\n\n" +
 			"--once handles at most one ticket and exits.\n" +
 			"--dry-run does a single pickup pass: it lists the Ready tickets, decides what would\n" +
 			"be picked up and how, and reports it here and in Telegram. Nothing changes in Linear or GitHub.",

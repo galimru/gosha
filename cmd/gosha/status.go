@@ -62,9 +62,10 @@ func (a *app) statusCmd() *cobra.Command {
 			}
 			fmt.Fprintln(cmd.OutOrStdout())
 			w = tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "PROJECT\tTICKET\tMODE\tSTEP\tBRANCH\tSINCE")
+			fmt.Fprintln(w, "PROJECT\tTICKET\tMODE\tSTEP\tROUNDS\tBRANCH\tSINCE")
 			for _, r := range runs {
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Project, r.TicketID, r.Mode, r.Step, r.Branch, r.CreatedAt.Local().Format(time.DateTime))
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\treview %d · checks %d\t%s\t%s\n", r.Project, r.TicketID, r.Mode, r.Step,
+					r.ReviewRound, r.CheckRound, r.Branch, r.CreatedAt.Local().Format(time.DateTime))
 			}
 			return w.Flush()
 		},

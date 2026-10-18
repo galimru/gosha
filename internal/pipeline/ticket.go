@@ -20,8 +20,7 @@ import (
 	"github.com/galimru/gosha/internal/tmpl"
 )
 
-// Steps a run records (DESIGN §8). In M3 a run parks at StepChecks once the
-// reviewer approves: checks and merge arrive in M4.
+// Steps a run records (DESIGN §8).
 const (
 	StepClaimed   = "claimed"
 	StepImplement = "implement"
@@ -30,6 +29,9 @@ const (
 	StepReview    = "review"
 	StepAddress   = "address"
 	StepChecks    = "checks"
+	StepFix       = "fix"
+	StepSync      = "sync"
+	StepMerge     = "merge"
 	StepBlocked   = "blocked"
 )
 
@@ -37,14 +39,16 @@ const (
 const (
 	OutcomeRestarted = "restarted"
 	OutcomeMerged    = "merged by hand"
+	// OutcomeDelivered is a run Gosha merged and reported In Review.
+	OutcomeDelivered = "delivered"
 )
 
 // ModeFollowUp is a fresh run on a ticket whose earlier PR was merged.
 const ModeFollowUp = "fresh (follow-up)"
 
-// Parked reports whether an open run is waiting rather than active, so the
-// project can pick up another ticket.
-func Parked(r *store.Run) bool { return r.Step == StepChecks || r.Step == StepBlocked }
+// Parked reports whether an open run is waiting for a human rather than
+// active, so the project can pick up another ticket.
+func Parked(r *store.Run) bool { return r.Step == StepBlocked }
 
 // issueOps is the Linear surface a ticket run uses.
 type issueOps interface {
@@ -62,6 +66,9 @@ type prOps interface {
 	CreateReview(ctx context.Context, number int, sha, body string, comments []github.ReviewComment) (int64, error)
 	CreateComment(ctx context.Context, number int, body string) error
 	HumanFeedback(ctx context.Context, number int, since time.Time) ([]github.Feedback, error)
+	Checks(ctx context.Context, sha string) ([]github.Check, error)
+	JobLog(ctx context.Context, jobID int64) (string, error)
+	Merge(ctx context.Context, number int, sha, method, title, message string) (string, error)
 }
 
 // ticket is one pickup of one ticket.
@@ -84,9 +91,31 @@ type ticket struct {
 	// fromReady is set when a human moved the ticket to Ready, as opposed
 	// to an interrupted run continuing: it resets the round limits.
 	fromReady bool
-	// actx carries the pickup's agent.timeout budget, shared by every
-	// agent pass in it.
+	// budget is what's left of agent.timeout in this pickup. Agent passes
+	// and agent.setup spend it; waiting for CI doesn't.
+	budget time.Duration
+	// actx is the current agent pass's context, bounded by the budget.
 	actx context.Context
+	// recheck is set when the next review is of a fix for failed checks or
+	// conflicts: approving it doesn't use up a review round.
+	recheck bool
+	// For the Delivered comment: the implementer's summary, the checks that
+	// passed and the merged diff, when this pickup saw them.
+	summary string
+	passed  []github.Check
+	diff    *gitx.DiffStat
+}
+
+// agentPass starts an agent pass (or agent.setup) bounded by what's left of
+// the budget, in t.actx. end charges the time it took.
+func (t *ticket) agentPass(ctx context.Context) (end func()) {
+	start := time.Now()
+	actx, cancel := context.WithTimeoutCause(ctx, t.budget, errAgentTimeout)
+	t.actx = actx
+	return func() {
+		t.budget -= time.Since(start)
+		cancel()
+	}
 }
 
 // Pass does one pickup pass for a project: it picks the next Ready ticket
@@ -194,10 +223,7 @@ func (e *Env) botIdentity(ctx context.Context, inst *github.Installation) (agent
 func (e *Env) handle(ctx context.Context, p *Project, st *linear.States, is issueOps, prs prOps, bot agent.Identity, c Candidate) error {
 	t := &ticket{e: e, p: p, states: st, issues: is, prs: prs, bot: bot,
 		issue: c.Issue, comments: c.NewComments, run: c.OpenRun, started: time.Now(),
-		fromReady: c.Issue.State.ID != st.InProgress.ID}
-	actx, cancel := context.WithTimeoutCause(ctx, p.Config.Agent.Timeout, errAgentTimeout)
-	defer cancel()
-	t.actx = actx
+		fromReady: c.Issue.State.ID != st.InProgress.ID, budget: p.Config.Agent.Timeout}
 	if err := t.claim(ctx, c.Comments); err != nil {
 		return err
 	}
@@ -273,6 +299,9 @@ func (t *ticket) drive(ctx context.Context) error {
 			return err
 		}
 		switch {
+		case pr.Merged && t.run.MergeSHA != "":
+			// Gosha merged it and stopped before reporting.
+			return t.deliver(ctx)
 		case pr.Merged:
 			if err := t.e.Store.FinishRun(ctx, t.run.ID, OutcomeMerged); err != nil {
 				return err
@@ -432,6 +461,7 @@ func (t *ticket) implement(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	t.summary = res.Summary
 	t.notify(fmt.Sprintf("%s · implemented · %s · %s\n%s", t.issue.Identifier, diff, time.Since(t.started).Round(time.Minute), res.Summary))
 	return t.publish(ctx, res, diff)
 }
@@ -452,6 +482,8 @@ func (t *ticket) prepare(ctx context.Context, checkout, role string) (fresh bool
 		return false, rp, err
 	}
 	if fresh && len(t.p.Config.Agent.Setup) > 0 {
+		end := t.agentPass(ctx)
+		defer end()
 		if err := t.setup(t.actx, checkout, rp); err != nil {
 			if errors.Is(context.Cause(t.actx), errAgentTimeout) {
 				return false, rp, t.block(ctx, fmt.Sprintf("`agent.setup` ran out of time (agent.timeout %v).", t.p.Config.Agent.Timeout), nil)
@@ -479,6 +511,7 @@ func (t *ticket) spec(prompt, dir string, rp runPaths) agent.Spec {
 // its failures. It returns a nil result when the pass ended the step: the
 // ticket went Blocked (nil error), or a usage limit or shutdown (error).
 func (t *ticket) runImplementer(ctx context.Context, spec agent.Spec, resultFile string) (*agent.ImplementerResult, error) {
+	defer t.agentPass(ctx)()
 	actx := t.actx
 	res, out, err := t.e.implement(actx, spec, resultFile)
 	if err != nil && spec.Resume != "" && !isStop(actx, err) {

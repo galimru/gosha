@@ -1,6 +1,6 @@
 # Gosha — Design
 
-> Status: **agreed plan**, implemented up to M3 (review loop). Implementation order: [ROADMAP.md](ROADMAP.md). Assumptions checked in M0: [SPIKES.md](SPIKES.md).
+> Status: **agreed plan**, implemented up to M4 (checks & merge). Implementation order: [ROADMAP.md](ROADMAP.md). Assumptions checked in M0: [SPIKES.md](SPIKES.md).
 
 ## 1. Overview
 
@@ -132,7 +132,7 @@ internal/daemon/      supervisors, scheduler, graceful shutdown
 **Tooling choices:**
 - **No `gh` CLI.** GitHub is accessed through its API from Go (`google/go-github`, with `bradleyfalzon/ghinstallation` for GitHub App tokens). That gives typed responses, automatic token refresh, conditional requests to save rate limit, and no command output to parse.
 - **The `git` CLI rather than go-git.** It has full merge and conflict support. The App token is passed in for each command and never stored.
-- **Host dependencies stay at two:** `git` and `claude`. On Linux, Claude Code's sandbox also needs `bubblewrap` and `socat` (not yet verified, see [SPIKES.md](SPIKES.md#open-items)); `gosha doctor` checks for them.
+- **Host dependencies stay at two:** `git` (2.38 or newer, for `merge-tree --write-tree`) and `claude`. On Linux, Claude Code's sandbox also needs `bubblewrap` and `socat` (not yet verified, see [SPIKES.md](SPIKES.md#open-items)); `gosha doctor` checks for them.
 
 ## 5. Configuration
 
@@ -218,7 +218,7 @@ deploy:                        # optional
   timeout: 20m
 
 agent:
-  timeout: 60m                 # total agent working time per pickup
+  timeout: 60m                 # total agent working time per pickup (waiting for CI doesn't count)
   model: ""                    # optional override
   setup: ["make deps"]         # optional commands run in a fresh checkout (outside the sandbox, §12)
   permission_mode: dontask     # dontask (default) | auto | bypass; see §7.1
@@ -249,7 +249,8 @@ The binary embeds default templates, and any file present in the repo overrides 
 | `.Context.Dir` / `.Context.Index` | path to the mirror / contents of `INDEX.md` | prompts |
 | `.Branch` / `.BaseBranch` | `gosha/NXT-12-add-login` / `main` | prompts |
 | `.Diff` | diff against the base (cut at 100 KB) | review |
-| `.Feedback.Review` / `.Feedback.CI` | review comments and human PR feedback / failed-check logs | address |
+| `.Feedback.Review` / `.Feedback.CI` | review comments and human PR feedback / failed checks with the failing step of each job log | address |
+| `.Feedback.Conflicts` | files that conflict with the base, as a list | address |
 | `.Feedback.Previous` | the last round's findings and the implementer's reply | review (from round 2) |
 | `.Round` | `2` | review, address |
 | `.ResultFile` | path for the result JSON | prompts |
@@ -480,19 +481,25 @@ All of them go through the same **address** step (`address.md`, data in `.Feedba
 Steps are recorded per round (`review` → `address` → `review` …), with the reviewed SHA and the posted review id, so a run that stops mid-round doesn't run or post the same review twice.
 
 ### 8.4 Checks (there's no branch protection, so Gosha decides)
+Gosha waits for checks in-line: the ticket stays the project's active ticket while CI runs (up to `checks.timeout`). Waiting doesn't spend `agent.timeout`, which counts only agent passes and `agent.setup`.
+
 For the PR's **head SHA**:
 1. **Expected checks:**
    - if `checks.required` is set → those names
-   - otherwise, if `.github/workflows/` has workflows that trigger on `pull_request` or `push` → "at least one check must appear"
+   - otherwise, if `.github/workflows/` on the base has workflows that trigger on `pull_request`, `pull_request_target` or `push` → "at least one check must appear"
    - otherwise → no checks, pass immediately
-2. **Wait for checks to start:** poll check runs and commit statuses. An expected check that hasn't appeared within `start_grace` counts as a failure.
-3. **Wait for checks to finish:** wait until all are completed, then wait another ~30s for late-starting checks before deciding.
-4. Any failure, cancellation or timeout: fetch the failed jobs' logs and cut out the failing step's section (a job log ends with post-job cleanup, so a plain tail misses the error), run the implementer with `address.md`, push, and go back to review if the diff changed meaningfully, otherwise back to checks. After `checks.max_rounds` failures → **Blocked**.
+2. **Wait for checks to start:** poll check runs and commit statuses (the newest status per context) every ~15s. An expected check that hasn't appeared within `start_grace` counts as a failure. If the only failures are checks that never started, there's nothing in the code to fix, so the ticket goes **Blocked** at once, naming them.
+3. **Wait for checks to finish:** wait until all are completed, then wait another ~30s for late-starting checks before deciding. A completed check passes on `success`, `neutral` or `skipped`. Checks still running at `checks.timeout` count as failed.
+4. **Any failure, cancellation or timeout** starts a check round: fetch the failed jobs' logs and cut out the failing step's section (from its `##[group]Run …` line to the first `##[error]`; a job log ends with post-job cleanup, so a plain tail misses the error), then run the implementer with `address.md` (the **fix** step). The round and its feedback are recorded against the failing head, so an interrupted fix continues with the same feedback instead of counting another round. After `checks.max_rounds` rounds → **Blocked**.
+5. **After a fix:** if it committed, push, reply on the PR, and go back to review: a **re-review** of the fix. It only takes a `review.max_rounds` slot if it requests changes. Then checks run again on the new head. A fix that commits nothing goes **Blocked** with the implementer's explanation (e.g. a flaky test or an infrastructure problem).
 
 ### 8.5 Merge
-1. If the base has moved, merge the base into the branch. On conflicts, the implementer resolves them (this counts as a check round). Push, then go back to checks.
-2. Squash-merge through the API **with `sha` = the head commit that was checked**. If anything was pushed after the checks ran, the merge is refused and Gosha goes back to checks.
-3. Delete the branch and remove the checkout.
+1. **New human PR feedback** since the run's PR cursor goes to an address pass and back through review and checks first. A human's "wait" on the PR is never merged over.
+2. **Base sync:** fetch, and if `origin/<base>` isn't an ancestor of the branch, merge it in. Gosha does this in the bare clone with `git merge-tree --write-tree` and `git commit-tree` (as the bot identity), so it still never runs git in an agent's checkout. A clean merge is pushed and goes back to checks (no review: the PR's own change is the same). The ticket checkout is removed so the next agent pass starts from the merge commit.
+3. **Conflicts** are a check round: Gosha rebuilds the ticket checkout from the branch (a fresh clone, which carries the latest base), and the implementer runs `git merge origin/<base>`, resolves the conflicted files and commits the merge. Gosha checks that the base is now an ancestor of the branch (otherwise **Blocked**), pushes, and the change goes through re-review and checks.
+4. **Merge** through the API with `github.merge_method` (squash by default), title `NXT-12: <title> (#<n>)`, **with `sha` = the head commit that was checked**. If anything was pushed after the checks ran, GitHub refuses the merge. Gosha only pushes after a check verdict through the steps above, so that push was someone else's: the ticket goes **Blocked** rather than merging code nobody checked.
+5. The merge commit is recorded at once, so a run that stops after merging finishes with cleanup and delivery on the next pass instead of being mistaken for a merge by hand.
+6. Delete the branch and remove the checkout.
 
 ### 8.6 Identities
 
@@ -726,4 +733,8 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - Per-project Claude config dir (`projects/<project>/claude/`); prompts go to claude on stdin. (M2)
 - The reviewer runs in a fresh throwaway clone of the pushed head each round, so nothing it does reaches the implementer's checkout or the branch. Each round is a new session, but it's shown the last round's findings and the implementer's reply. (M3)
 - Human PR feedback (comments, inline comments, review bodies from non-bots) is collected before every review verdict from a per-run cursor, and forces an address pass. Address passes reply on the PR with the implementer's summary. (M3)
-- `agent.timeout` is one budget per pickup, shared by every agent pass in it. (M3)
+- `agent.timeout` is one budget per pickup, shared by every agent pass in it. (M3) It counts agent passes and `agent.setup` only, not waiting for CI. (M4)
+- Checks are waited for in-line; the ticket stays the project's active ticket meanwhile. A run is parked only while Blocked. (M4)
+- A fix for failed checks or conflicts goes back through review (a re-review that only takes a review round if it requests changes), then checks. (M4)
+- The base is merged into the branch in the bare clone (`git merge-tree`, git ≥ 2.38); conflicts are resolved by the implementer in a fresh checkout and count as a check round. (M4)
+- Merges are pinned to the checked head; a push by anyone else after the checks blocks the ticket instead of being merged. New human PR feedback is addressed before merging. (M4)

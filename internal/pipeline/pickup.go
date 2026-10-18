@@ -1,5 +1,5 @@
-// Package pipeline is the per-ticket pipeline (DESIGN §8). As of M3 it
-// takes a ticket from Ready to a reviewed PR.
+// Package pipeline is the per-ticket pipeline (DESIGN §8). As of M4 it
+// takes a ticket from Ready to a merged PR with green checks.
 package pipeline
 
 import (

@@ -46,8 +46,10 @@ type Context struct {
 type Feedback struct {
 	// Review is the reviewer's comments and human PR feedback (address).
 	Review string
-	// CI is the failed-check logs (address, M4).
+	// CI is the failed checks with the failing part of their logs (address).
 	CI string
+	// Conflicts lists the files that conflict with the base (address).
+	Conflicts string
 	// Previous is the last round's review and the implementer's reply
 	// (review, from round 2).
 	Previous string

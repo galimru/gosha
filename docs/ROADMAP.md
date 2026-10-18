@@ -66,7 +66,7 @@ Changes from the plan: the ticket "worktree" is a self-contained local clone (DE
 
 **Status: built** (2026-10-18), pending the end-to-end check below on a real project. Behaviour that is specific to M3, until checks and merge exist:
 - **After the reviewer approves,** the run parks at step `checks` and the ticket stays In Progress. A parked run doesn't keep the project busy, so the next Ready ticket is picked up. Runs that M2 parked at `review` are active again, so their PRs get reviewed on the first pass after the upgrade.
-- **Parked runs aren't watched.** Human PR comments are collected before every review verdict, but a comment on a PR parked at `checks` waits until the ticket is next picked up (move it to Ready) or until M4 and M7 watch open PRs.
+- **Parked runs aren't watched.** Human PR comments are collected before every review verdict, but a comment on a PR parked at `checks` waits until the ticket is next picked up (move it to Ready). (M4 no longer parks at `checks`.)
 
 Changes from the plan:
 - **The reviewer runs in a fresh throwaway clone** of the pushed head each round (`worktrees/<ticket>-review`), with `agent.setup` run in it. Its Bash can still write there, but nothing it does reaches the implementer's checkout or the branch.
@@ -81,6 +81,17 @@ Changes from the plan:
 **Done when:** a PR goes through at least one review → fix round on its own.
 
 ## M4 — Checks & merge
+
+**Status: built** (2026-10-18), pending the end-to-end check below on a real project. Behaviour that is specific to M4, until deploy watch and delivery exist (M6):
+- **After the merge,** Gosha posts a short Delivered comment (PR link, merge commit, diff size, the implementer's summary, review and check rounds, the checks that passed), moves the ticket to In Review and finishes the run. There's no deploy watch yet, and the full Delivered comment (DESIGN §3) comes in M6.
+- **Runs that M3 parked at `checks` are active again,** so they wait for checks and merge on the first pass after the upgrade. Only Blocked runs are parked now.
+
+Changes from the plan:
+- **Checks are waited for in-line,** keeping the ticket the project's active one, and the wait doesn't spend `agent.timeout` (now agent working time only).
+- **A CI fix or conflict resolution is re-reviewed** before checks run again. The re-review only takes a review round if it requests changes.
+- **The base is merged in the bare clone** with `git merge-tree` (git ≥ 2.38, checked by `gosha doctor`). Conflicts are resolved by the implementer in a fresh checkout.
+- **Checks that never start** (e.g. a misnamed `checks.required`) go Blocked at once instead of costing a fix round. A fix that commits nothing goes Blocked with the implementer's explanation.
+- **A push by someone else** after the checks makes GitHub refuse the pinned merge, and the ticket goes Blocked rather than back to checks. New human PR feedback is addressed before merging.
 
 - Expected-check detection, start grace, wait for completion
 - Failed-job log extraction, CI feedback into the address step, `checks.max_rounds`

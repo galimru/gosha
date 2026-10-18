@@ -56,6 +56,49 @@ type fakePRs struct {
 	comments []string
 	// feedback is human PR feedback; HumanFeedback returns what's after since.
 	feedback []github.Feedback
+	// checks returns the checks on a head for each call. Without it, Gosha
+	// is stopped while it waits for checks, as by a shutdown, so the run
+	// stays open at StepChecks.
+	checks     func(call int, sha string) []github.Check
+	checkCalls int
+	stop       context.CancelFunc
+	stopped    bool
+	logs       map[int64]string
+	merged     []mergeCall
+	mergeErr   error
+}
+
+type mergeCall struct {
+	number             int
+	sha, method, title string
+}
+
+func (f *fakePRs) Checks(_ context.Context, sha string) ([]github.Check, error) {
+	f.checkCalls++
+	if f.checks == nil {
+		f.stopped = true
+		f.stop()
+		return nil, context.Canceled
+	}
+	return f.checks(f.checkCalls, sha), nil
+}
+
+func (f *fakePRs) JobLog(_ context.Context, id int64) (string, error) {
+	if l, ok := f.logs[id]; ok {
+		return l, nil
+	}
+	return "", errors.New("no log")
+}
+
+func (f *fakePRs) Merge(_ context.Context, n int, sha, method, title, _ string) (string, error) {
+	if f.mergeErr != nil {
+		err := f.mergeErr
+		f.mergeErr = nil
+		return "", err
+	}
+	f.merged = append(f.merged, mergeCall{n, sha, method, title})
+	f.prs[n].State, f.prs[n].Merged = "closed", true
+	return "merge-" + sha[:7], nil
 }
 
 type postedReview struct {
@@ -193,7 +236,11 @@ func newHarness(t *testing.T, cfg string) *harness {
 	if cfg == "" {
 		cfg = "name: demo\nlinear:\n  team: NXT\nnotion:\n  root_page: x\n"
 	}
+	// CI runs on pull requests, so a PR is expected to get checks.
+	os.MkdirAll(filepath.Join(up.dir, ".github", "workflows"), 0o755)
+	os.WriteFile(filepath.Join(up.dir, ".github", "workflows", "ci.yml"), []byte("on: [pull_request]\n"), 0o644)
 	up.commit(cfg)
+	checkPoll, checkSettle = time.Millisecond, time.Millisecond
 
 	home := config.Home(t.TempDir())
 	repo, err := gitx.CloneBare(ctx, "file://"+up.dir, home.Project("demo").Repo(), "")
@@ -223,7 +270,8 @@ func newHarness(t *testing.T, cfg string) *harness {
 	return h
 }
 
-// pickup runs one pickup of the ticket as the poller would see it.
+// pickup runs one pickup of the ticket as the poller would see it. Being
+// stopped while waiting for checks (no h.prs.checks) isn't an error.
 func (h *harness) pickup(comments ...linear.Comment) error {
 	h.t.Helper()
 	run, err := h.env.Store.OpenRun(h.ctx, "demo", h.issue.Identifier)
@@ -232,7 +280,24 @@ func (h *harness) pickup(comments ...linear.Comment) error {
 	}
 	cur, _ := h.env.Store.CommentCursor(h.ctx, "demo", h.issue.Identifier)
 	c := Candidate{Issue: h.issue, Comments: comments, NewComments: NewHumanComments(comments, cur), OpenRun: run}
-	return h.env.handle(h.ctx, h.p, states, h.lin, h.prs, agent.Identity{Name: "goshabot[bot]", Email: "1+goshabot[bot]@users.noreply.github.com"}, c)
+	ctx, cancel := context.WithCancel(h.ctx)
+	defer cancel()
+	h.prs.stop, h.prs.stopped = cancel, false
+	err = h.env.handle(ctx, h.p, states, h.lin, h.prs, agent.Identity{Name: "goshabot[bot]", Email: "1+goshabot[bot]@users.noreply.github.com"}, c)
+	if h.prs.stopped && errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
+}
+
+// lastRun is the ticket's newest run, open or finished.
+func (h *harness) lastRun() *store.Run {
+	h.t.Helper()
+	r, err := h.env.Store.LastRun(h.ctx, "demo", h.issue.Identifier)
+	if err != nil || r == nil {
+		h.t.Fatalf("last run: %v, %v", r, err)
+	}
+	return r
 }
 
 func (h *harness) run() *store.Run {
@@ -255,7 +320,7 @@ func TestTicketToPR(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := h.run()
-	if r.Step != StepChecks || r.PRNumber != 1 || r.Branch != "gosha/NXT-12-add-login" || r.ImplSession != "sess-1" || !Parked(r) || r.ReviewRound != 1 {
+	if r.Step != StepChecks || r.PRNumber != 1 || r.Branch != "gosha/NXT-12-add-login" || r.ImplSession != "sess-1" || Parked(r) || r.ReviewRound != 1 {
 		t.Errorf("run = %+v", r)
 	}
 	if h.lin.state() != states.InProgress.ID || len(h.lin.attachments) != 1 || len(h.lin.comments) != 0 {
@@ -287,7 +352,7 @@ func TestTicketToPR(t *testing.T) {
 		t.Errorf("reviews = %+v", h.prs.reviews)
 	}
 	ev := strings.Join(h.events.take(), "\n")
-	for _, want := range []string{"picked up (fresh)", "implemented · +1 −0 in 1 files", "PR #1 opened", "review 1/3 ✅ · 0 must, 0 should, 1 nit · waiting for checks (M4)"} {
+	for _, want := range []string{"picked up (fresh)", "implemented · +1 −0 in 1 files", "PR #1 opened", "review 1/3 ✅ · 0 must, 0 should, 1 nit"} {
 		if !strings.Contains(ev, want) {
 			t.Errorf("events missing %q:\n%s", want, ev)
 		}
