@@ -17,6 +17,8 @@ Implementation order for the design in [DESIGN.md](DESIGN.md). The riskiest assu
 
 Throwaway code. The goal is answers, not features. Any "no" updates DESIGN.md before M1 starts.
 
+**Status: done** (2026-10-18). Findings in [SPIKES.md](SPIKES.md). Changes it caused: agents default to `dontask` mode with an allowlist instead of bypass, and Linear uses the `client_credentials` grant. Linux was not verified and stays best effort (re-check before M7).
+
 - **Claude runner** (DESIGN §7, §7.1), on macOS **and** an Ubuntu VPS, as a non-root user:
   - headless `claude -p` in bypass mode authenticates with a `claude setup-token` token
   - an isolated settings directory: the user's `~/.claude` has no effect
@@ -33,7 +35,7 @@ Throwaway code. The goal is answers, not features. Any "no" updates DESIGN.md be
 - `${VAR}` secrets: shared + per-project files, literal-secret rejection, redaction
 - SQLite store
 - Root refusal
-- Linear client: poll Ready, transitions, comments, attachments, state mapping with defaults, state-type detection
+- Linear client: `client_credentials` token minting, poll Ready, transitions, comments, attachments, state mapping with defaults, state-type detection
 - Telegram notifier (async queue)
 - CLI: `add`, `remove`, `list`, `validate`, `doctor`, `auth linear`, `secrets edit`, `status`
 - Dry-run pickup: lists Ready tickets (priority, then age; blocked-by respected) and what would happen
@@ -44,7 +46,7 @@ Throwaway code. The goal is answers, not features. Any "no" updates DESIGN.md be
 
 - gitx: bare clone, fetch, worktrees, push with an injected App token
 - GitHub App auth and API client (go-github)
-- Claude runner from M0, implementer prompt (`implement.md` default + repo override), result contract
+- Claude runner as validated in M0 (generated settings, `dontask` allowlist, sandbox, scrubbed env, process group), implementer prompt (`implement.md` default + repo override), result contract
 - Branch name template, PR creation, Linear attachment, In Progress → Blocked on failure
 - `gosha run <project>`: foreground loop for one project; `--once` for a single ticket
 
@@ -90,6 +92,7 @@ Throwaway code. The goal is answers, not features. Any "no" updates DESIGN.md be
 - Crash recovery, cancel and pause (Backlog/Todo/Canceled), usage-limit pause/resume
 - `gosha service install|uninstall|start|stop|restart|status` (systemd + launchd)
 - Log rotation, daily digest
+- Verify the agent sandbox on Linux (bubblewrap, required packages, root refusal); see SPIKES.md open items
 - Remaining CLI: `init`, `config show`, `auth status`, `logs`
 
 **Done when:** Gosha runs as a service on a VPS for a week across two projects without intervention beyond Linear.
