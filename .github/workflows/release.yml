@@ -1,0 +1,41 @@
+name: release
+
+# Every merge to main with a feat, fix or perf commit since the last tag
+# publishes a release: the next version comes from the commit types.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: next
+        run: echo "tag=$(sh .github/scripts/next-version.sh)" >> "$GITHUB_OUTPUT"
+      - if: steps.next.outputs.tag != ''
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - if: steps.next.outputs.tag != ''
+        run: go test ./...
+      - if: steps.next.outputs.tag != ''
+        run: |
+          git tag "${{ steps.next.outputs.tag }}"
+          git push origin "${{ steps.next.outputs.tag }}"
+      - if: steps.next.outputs.tag != ''
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
