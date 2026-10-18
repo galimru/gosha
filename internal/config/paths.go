@@ -94,3 +94,7 @@ func (p ProjectPaths) Repo() string      { return filepath.Join(p.Dir, "repo") }
 func (p ProjectPaths) Worktrees() string { return filepath.Join(p.Dir, "worktrees") }
 func (p ProjectPaths) Context() string   { return filepath.Join(p.Dir, "context") }
 func (p ProjectPaths) Runs() string      { return filepath.Join(p.Dir, "runs") }
+
+// Claude is the project's own CLAUDE_CONFIG_DIR: agent sessions persist
+// there for --resume, and the user's ~/.claude never applies (DESIGN §11.2).
+func (p ProjectPaths) Claude() string { return filepath.Join(p.Dir, "claude") }
