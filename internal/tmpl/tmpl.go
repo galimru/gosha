@@ -1,5 +1,4 @@
-// Package tmpl holds the data model and functions of the agent prompts
-// (DESIGN §5.3).
+// Package tmpl holds the data model and functions of the agent prompts.
 package tmpl
 
 import (

@@ -28,7 +28,7 @@ const needAnswer = "answer in a comment, then move the ticket back to Ready and 
 	"To start over from scratch, close the pull request instead."
 
 // block posts the Blocked comment, moves the ticket to Blocked and keeps
-// the branch, PR and checkout so a later Ready resumes (DESIGN §8.9).
+// the branch, PR and checkout so a later Ready resumes.
 func (t *ticket) block(ctx context.Context, reason string, questions []string) error {
 	return t.blockWith(ctx, reason, questions, needAnswer)
 }

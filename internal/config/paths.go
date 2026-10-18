@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-// Home is Gosha's single home directory (DESIGN §11.3).
+// Home is Gosha's single home directory.
 type Home string
 
 // ResolveHome picks the home directory: the --home flag, then GOSHA_HOME,
@@ -43,7 +43,7 @@ func (h Home) LogFile() string     { return filepath.Join(string(h), "logs", "go
 func (h Home) ProjectsDir() string { return filepath.Join(string(h), "projects") }
 
 // WorkspacesDir holds every ticket's agent workspace: the only part of
-// the home agents can reach (DESIGN §7.1).
+// the home agents can reach.
 func (h Home) WorkspacesDir() string { return filepath.Join(string(h), "workspaces") }
 
 // Path resolves p relative to the home directory unless it is absolute.
@@ -73,7 +73,7 @@ func (h Home) EnsureDir() error {
 }
 
 // Projects lists registered projects: directories under projects/ that
-// contain a repo/ clone (DESIGN §5.1). Names starting with '.' are
+// contain a repo/ clone. Names starting with '.' are
 // in-progress adds and are skipped.
 func (h Home) Projects() ([]string, error) {
 	entries, err := os.ReadDir(h.ProjectsDir())
@@ -113,10 +113,10 @@ func (p ProjectPaths) RunLock() string { return filepath.Join(p.Dir, "run.lock")
 func (p ProjectPaths) CleanupLock() string { return filepath.Join(p.Dir, "cleanup.lock") }
 
 // Claude is the project's own CLAUDE_CONFIG_DIR: agent sessions persist
-// there for --resume, and the user's ~/.claude never applies (DESIGN §11.2).
+// there for --resume, and the user's ~/.claude never applies.
 func (p ProjectPaths) Claude() string { return filepath.Join(p.Dir, "claude") }
 
-// Workspace is what agents work in for one ticket (DESIGN §11.3).
+// Workspace is what agents work in for one ticket.
 // Everything in it can be rebuilt.
 type Workspace struct{ Dir string }
 

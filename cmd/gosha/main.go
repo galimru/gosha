@@ -1,4 +1,4 @@
-// Command gosha is the Gosha CLI and daemon (DESIGN §11.6).
+// Command gosha is the Gosha CLI and daemon.
 package main
 
 import (
@@ -135,7 +135,7 @@ func (a *app) redact(s string) string {
 // GitHub App and the Telegram feed.
 func (a *app) env(ctx context.Context) (*pipeline.Env, error) {
 	if fi, err := os.Stat(a.home.Dir()); err != nil || !fi.IsDir() {
-		return nil, fmt.Errorf("no Gosha home at %s: create it with config.yaml (DESIGN §5.1), or pass --home", a.home.Dir())
+		return nil, fmt.Errorf("no Gosha home at %s: create it with config.yaml, or pass --home", a.home.Dir())
 	}
 	secrets, err := config.LoadSecrets(a.home, "", a.red)
 	if err != nil {
@@ -175,7 +175,7 @@ func (a *app) env(ctx context.Context) (*pipeline.Env, error) {
 	return &pipeline.Env{Home: a.home, Global: g, App: app, Store: st, Notify: tg, Log: a.log, Redactor: a.red, Limit: limit}, nil
 }
 
-// refuseRoot stops commands that run agents from running as root (DESIGN §11.2).
+// refuseRoot stops commands that run agents from running as root.
 func refuseRoot() error {
 	if geteuid() == 0 {
 		return errors.New("refusing to run as root: agents execute commands derived from ticket text. " +

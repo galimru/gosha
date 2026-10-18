@@ -19,7 +19,7 @@ Implementation order for the design in [DESIGN.md](DESIGN.md). The riskiest assu
 
 Throwaway code. The goal is answers, not features. Any "no" updates DESIGN.md before M1 starts.
 
-**Status: done** (2026-10-18). Findings in [SPIKES.md](SPIKES.md). Changes it caused: agents default to `dontask` mode with an allowlist instead of bypass, and Linear uses the `client_credentials` grant. Linux was not verified and stays best effort (re-check before M8).
+**Status: done** (2026-10-18). Findings in [SPIKES.md](SPIKES.md). Changes it caused: agents default to `dontask` mode with an allowlist instead of bypass, and Linear uses the `client_credentials` grant. Linux was not verified and stays best effort (re-checked in M9).
 
 - **Claude runner** (DESIGN §7, §7.1), on macOS **and** an Ubuntu VPS, as a non-root user:
   - headless `claude -p` in bypass mode authenticates with a `claude setup-token` token
@@ -163,11 +163,23 @@ Changes from the plan:
 
 ## M8 — Production
 
+**Status: built** (2026-10-18), in one PR with a commit per item, pending the "done when" week below and the end-to-end checks in M9. The migrations were squashed into one baseline, so an old `gosha.db` should be deleted; from here on migrations are append-only.
+
+Changes from the plan:
+- **Verifying the agent sandbox on Linux moved to M9,** which runs Gosha on a Linux VPS anyway. Linux stays best effort until then.
+- **Panics are retried, not paused:** a supervisor recovers, alerts once, and polls again after 5 minutes. Exiting would take down every project, and a "crashed" state would need clearing rules for no gain, since steps are idempotent.
+- **A `concurrency` slot covers one agent pass,** not a whole pickup, so a project waiting on CI doesn't hold one. Waiting for a slot doesn't spend `agent.timeout`.
+- **A `run.lock` per project** keeps the daemon and `gosha run` from running the same project, and a `cleanup.lock` keeps cleanup off a workspace a pickup is about to claim.
+- **Only the daemon and `gosha run` rotate the log;** short commands append, so they never rotate it from under the daemon. Log lines were already tagged with their project, so no per-project loggers were needed.
+- **The digest's Ready counts come from each project's last poll,** so the digest never fetches a repo concurrently with its supervisor.
+- **A run replaced in the same pickup** (PR closed unmerged, or merged by hand) still loses only its checkout: the new run uses the same workspace, frozen context included. Leftover workspaces with no run are removed after `retention`.
+- **`gosha init` takes the required fields as flags** (`--team`, `--notion`) and refuses to write a config `validate` would reject.
+
 - Daemon: multiple projects, global scheduler, panic isolation
 - Crash recovery, cancel and pause (Backlog/Todo/Canceled), usage-limit pause/resume
 - `gosha service install|uninstall|start|stop|restart|status` (systemd + launchd)
 - Log rotation, daily digest
-- Verify the agent sandbox on Linux (bubblewrap, required packages, root refusal); see SPIKES.md open items
+- ~~Verify the agent sandbox on Linux~~ (moved to M9)
 - Remaining CLI: `init`, `config show`, `logs`
 - Releases (DESIGN §11.4): GoReleaser builds macOS and Linux binaries (amd64, arm64) with `main.version` set, and a workflow publishes a GitHub release on every merge to `main` that has a `feat`, `fix` or `perf` commit since the last tag. Versions stay `0.x`: `feat` and breaking changes bump the minor, everything else the patch
 - Install and upgrade (DESIGN §11.4): `install.sh` (download, checksum, install to `~/.local/bin`), `gosha upgrade` (replace the binary, restart the service), README getting started switched to `install.sh`
@@ -191,6 +203,7 @@ Every milestone so far was built against unit tests and fakes, and M1–M7 are e
 - **Lifecycle** (DESIGN §2): Ready → delivered and In Review; In Review → comment → Ready opens a follow-up PR; Blocked → answer → Ready resumes on the same PR; PR closed → Ready restarts; Backlog/Todo pauses and Ready resumes; Canceled closes the PR and deletes the branch
 - **Pipeline:** priority and blocked-by ordering, a review → fix round, a failing check → fix round, a moved base (with and without a conflict), a push touching `.github/workflows/` going Blocked, a failed deploy reported on the ticket
 - **Context:** an agent reads the Notion pages relevant to its ticket; edits, renames and moves between pickups show up in the mirror; removing Notion access pauses the project
+- **Linux sandbox** (moved from M8): bubblewrap and `socat` as the only extra packages, the sandbox's read and write rules matching macOS, root refusal, and `TestRealClaude` with a setup token (SPIKES open items)
 - **Recovery:** the daemon killed during implement, review and checks resumes each run; a usage limit pauses and resumes (capturing the real payload, SPIKES open items); an invalid config on the default branch pauses the project
 - **Operations:** two projects at once, Telegram alerts, the daily digest and heartbeat, `gosha upgrade` during a run, retention cleanup
 

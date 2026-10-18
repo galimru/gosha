@@ -16,7 +16,7 @@ import (
 )
 
 const secretsTemplate = `# Gosha secrets: KEY=value, one per line. Keep this file chmod 600.
-# Config files reference these as ${KEY} (DESIGN §5.4).
+# Gosha reads these keys by name; a project's own secrets.env overrides any of them.
 LINEAR_CLIENT_ID=
 LINEAR_CLIENT_SECRET=
 NOTION_TOKEN=

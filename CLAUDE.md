@@ -19,7 +19,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/) **with a scope*
 ```
 
 - **type:** `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, `ci`, `chore`
-- **scope:** the area touched, usually the package: `cli`, `config`, `linear`, `notion`, `github`, `gitx`, `agent`, `pipeline`, `store`, `notify`, `daemon`, `service`, `docs`
+- **scope:** the area touched, usually the package: `cli`, `config`, `linear`, `notion`, `github`, `gitx`, `agent`, `pipeline`, `store`, `notify`, `daemon`, `service`, `release`, `flock`, `docs`
 - **summary:** imperative, lowercase, no trailing period, ≤ 72 characters
 - Breaking changes: `!` after the scope (`feat(config)!: …`) plus a `BREAKING CHANGE:` footer
 

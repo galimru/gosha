@@ -1,4 +1,4 @@
-// Package github talks to GitHub as the Gosha GitHub App (DESIGN §8.6).
+// Package github talks to GitHub as the Gosha GitHub App.
 package github
 
 import (

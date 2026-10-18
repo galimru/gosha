@@ -1,4 +1,4 @@
-// Package agent runs the claude CLI headless for Gosha's agents (DESIGN §7):
+// Package agent runs the claude CLI headless for Gosha's agents:
 // generated settings, a scrubbed environment, the result contract and
 // usage-limit detection.
 package agent
@@ -74,7 +74,7 @@ func (p Paths) EnsureDirs() error {
 	return nil
 }
 
-// Agent roles (DESIGN §7).
+// Agent roles.
 const (
 	RoleImplementer = "implement"
 	RoleReviewer    = "review"
@@ -83,7 +83,7 @@ const (
 // ReviewerDisallowed are the tools removed from the reviewer.
 var ReviewerDisallowed = []string{"Edit", "Write", "NotebookEdit"}
 
-// Settings builds the settings file for an agent run (DESIGN §7.1). The
+// Settings builds the settings file for an agent run. The
 // reviewer gets no Edit allows and, in the sandbox, no writable checkout;
 // its edit tools are also removed outright (ReviewerDisallowed), which
 // holds in every permission mode.

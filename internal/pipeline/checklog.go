@@ -15,11 +15,11 @@ const (
 // logTime is the timestamp GitHub Actions puts at the start of every line.
 var logTime = regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z `)
 
-// failingStep cuts the failing step's section out of an Actions job log
-// (DESIGN §8.4). A job log ends with post-job cleanup, so its tail rarely
-// shows the error. Each step starts with a `##[group]Run …` line; the
-// failing step is the one holding the first `##[error]`. A log without an
-// error marker falls back to its tail.
+// failingStep cuts the failing step's section out of an Actions job log.
+// A job log ends with post-job cleanup, so its tail rarely shows the error.
+// Each step starts with a `##[group]Run …` line; the failing step is the one
+// holding the first `##[error]`. A log without an error marker falls back to
+// its tail.
 func failingStep(log string) string {
 	lines := strings.Split(strings.ReplaceAll(log, "\r\n", "\n"), "\n")
 	for i, l := range lines {

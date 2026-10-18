@@ -20,7 +20,7 @@ import (
 	"github.com/galimru/gosha/internal/tmpl"
 )
 
-// Steps a run records (DESIGN §8).
+// Steps a run records.
 const (
 	StepClaimed   = "claimed"
 	StepImplement = "implement"
@@ -255,7 +255,7 @@ func (e *Env) botIdentity(ctx context.Context, inst *github.Installation) (agent
 	return *e.bot, nil
 }
 
-// handle claims a ticket and runs it (DESIGN §8.1, §8.2). Failures after
+// handle claims a ticket and runs it. Failures after
 // the claim go Blocked, except a usage limit or a shutdown: those leave the
 // ticket In Progress and the run resumable. claimed, if set, is called
 // once the run is claimed (or the claim failed).
@@ -414,7 +414,7 @@ func (t *ticket) restart(ctx context.Context, r *store.Run) error {
 
 // chooseBranch takes the ticket's branch name and adds -2, -3, … while the
 // name is taken, on GitHub or by an earlier run: Gosha never takes over a
-// branch it doesn't own (DESIGN §8.2). reuse is a name this run may take
+// branch it doesn't own. reuse is a name this run may take
 // back because it just deleted it.
 func (t *ticket) chooseBranch(ctx context.Context, reuse string) (string, error) {
 	if reuse != "" {
@@ -447,7 +447,7 @@ func (t *ticket) chooseBranch(ctx context.Context, reuse string) (string, error)
 	}
 }
 
-// workspace is the ticket's agent workspace (DESIGN §11.3).
+// workspace is the ticket's agent workspace.
 func (t *ticket) workspace() config.Workspace {
 	return t.e.Home.Workspace(t.p.Name, t.issue.Identifier)
 }
@@ -461,7 +461,7 @@ func (t *ticket) save(ctx context.Context, step string) error {
 }
 
 // implement runs the implementer in the ticket checkout, then collects,
-// pushes and opens the PR (DESIGN §8.2).
+// pushes and opens the PR.
 func (t *ticket) implement(ctx context.Context) error {
 	if err := t.save(ctx, StepImplement); err != nil {
 		return err

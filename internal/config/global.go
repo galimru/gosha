@@ -9,14 +9,14 @@ import (
 	"time"
 )
 
-// Global is the machine-level config, ~/.gosha/config.yaml (DESIGN §5.1).
+// Global is the machine-level config, ~/.gosha/config.yaml.
 type Global struct {
 	Concurrency int         `yaml:"concurrency"`
 	Agent       GlobalAgent `yaml:"agent"`
 	GitHubApp   GitHubApp   `yaml:"github_app"`
 	Telegram    Telegram    `yaml:"telegram"`
 	// HeartbeatURL is GET-pinged after every poll, so an outside monitor
-	// notices when Gosha stops (DESIGN §9). Optional.
+	// notices when Gosha stops. Optional.
 	HeartbeatURL string `yaml:"heartbeat_url"`
 	// RetentionText is how long finished runs' files and idle Blocked
 	// workspaces are kept ("30d" by default); Retention is it parsed.

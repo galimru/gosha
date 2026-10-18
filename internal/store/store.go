@@ -1,5 +1,4 @@
-// Package store persists runs, comment cursors and project state in SQLite
-// (DESIGN §10).
+// Package store persists runs, comment cursors and project state in SQLite.
 package store
 
 import (
@@ -359,7 +358,7 @@ func (s *Store) Counts(ctx context.Context, from, to time.Time) (map[string]DayC
 }
 
 // Branches lists every branch Gosha has used in a project, for the rule
-// that it never takes over a branch it doesn't own (DESIGN §8.2).
+// that it never takes over a branch it doesn't own.
 func (s *Store) Branches(ctx context.Context, project string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT branch FROM runs WHERE project = ? AND branch != ''`, project)
 	if err != nil {
@@ -420,14 +419,14 @@ type ProjectState struct {
 	Status  string
 	Reason  string
 	// Notion is set when the pause is over Notion access, which only a
-	// pickup's context refresh can clear (DESIGN §6.2).
+	// pickup's context refresh can clear.
 	Notion    bool
 	Commit    string
 	UpdatedAt time.Time
 }
 
 // SetProjectState records a project's state and reports whether the status
-// changed, so callers notify only on transitions (DESIGN §5.2).
+// changed, so callers notify only on transitions.
 func (s *Store) SetProjectState(ctx context.Context, st ProjectState) (changed bool, err error) {
 	prev, err := s.ProjectState(ctx, st.Project)
 	if err != nil {

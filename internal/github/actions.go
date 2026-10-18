@@ -25,7 +25,7 @@ type Job struct {
 }
 
 // DeployRun returns the newest run of the workflow file (e.g. deploy.yml)
-// for commit sha on branch, or nil when there's none yet (DESIGN §8.7).
+// for commit sha on branch, or nil when there's none yet.
 func (i *Installation) DeployRun(ctx context.Context, workflow, sha, branch string) (*WorkflowRun, error) {
 	res, _, err := i.api.Actions.ListWorkflowRunsByFileName(ctx, i.Repo.Owner, i.Repo.Name, workflow, &gh.ListWorkflowRunsOptions{
 		Branch: branch, HeadSHA: sha, ListOptions: gh.ListOptions{PerPage: 1},

@@ -8,7 +8,7 @@ import (
 )
 
 // States are the team's states that Gosha uses, resolved from the config's
-// names (DESIGN §3). Done and Canceled are recognised by type, not name.
+// names. Done and Canceled are recognised by type, not name.
 type States struct {
 	Ready, InProgress, InReview, Blocked State
 }

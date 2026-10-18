@@ -14,7 +14,7 @@ import (
 type Identity struct{ Name, Email string }
 
 // BotIdentity looks up the App's bot user. Its noreply email needs the bot
-// *user* id, which differs from the App id (DESIGN §8.6).
+// *user* id, which differs from the App id.
 func (i *Installation) BotIdentity(ctx context.Context, app AppInfo) (Identity, error) {
 	login := app.BotLogin()
 	u, _, err := i.api.Users.Get(ctx, login)
@@ -88,7 +88,7 @@ func (i *Installation) ClosePR(ctx context.Context, number int) error {
 var ErrConflict = errors.New("the base branch conflicts with the pull request")
 
 // UpdateBranch asks GitHub to merge the base into the PR's branch, as long
-// as its head is still head (DESIGN §8.5). GitHub merges in the
+// as its head is still head. GitHub merges in the
 // background: the PR's head changes once it's done. A head that moved is
 // ErrHeadMoved, and a conflict ErrConflict.
 func (i *Installation) UpdateBranch(ctx context.Context, number int, head string) error {

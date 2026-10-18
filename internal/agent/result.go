@@ -16,7 +16,7 @@ const (
 	StatusBlocked = "blocked"
 )
 
-// ImplementerResult is the implementer's result file (DESIGN §7).
+// ImplementerResult is the implementer's result file.
 type ImplementerResult struct {
 	Status       string   `json:"status"`
 	Summary      string   `json:"summary"`
@@ -70,7 +70,7 @@ type ReviewComment struct {
 	Body     string `json:"body"`
 }
 
-// ReviewerResult is the reviewer's result file (DESIGN §7).
+// ReviewerResult is the reviewer's result file.
 type ReviewerResult struct {
 	Verdict  string          `json:"verdict"`
 	Summary  string          `json:"summary"`
@@ -142,8 +142,7 @@ func Review(ctx context.Context, s Spec, resultFile string) (*ReviewerResult, *O
 }
 
 // runWithResult runs an agent and reads its result file. A missing or
-// invalid result gets one retry in the same session, quoting the problem
-// (DESIGN §7).
+// invalid result gets one retry in the same session, quoting the problem.
 func runWithResult[T any](ctx context.Context, s Spec, resultFile string, parse func([]byte) (T, error)) (T, *Outcome, error) {
 	var zero T
 	os.Remove(resultFile)

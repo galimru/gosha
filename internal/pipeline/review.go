@@ -16,7 +16,7 @@ import (
 // <n>-address.jsonl); they get the implementer's permissions.
 const roleAddress = "address"
 
-// resumeOpen continues a run whose PR is open (DESIGN §8.1, §8.3). From
+// resumeOpen continues a run whose PR is open. From
 // Ready, the round limit resets; new ticket comments go to the
 // implementer first, otherwise the PR gets a fresh review. An
 // interrupted run continues at the step it stopped at.
@@ -47,7 +47,7 @@ func (t *ticket) resumeOpen(ctx context.Context) error {
 }
 
 // reviewLoop reviews and addresses until the reviewer approves (then on to
-// checks), the round limit is hit or the ticket goes Blocked (DESIGN §8.3).
+// checks), the round limit is hit or the ticket goes Blocked.
 // With addressFirst, it starts with an address pass.
 func (t *ticket) reviewLoop(ctx context.Context, addressFirst bool) error {
 	if addressFirst {
@@ -124,7 +124,7 @@ func (t *ticket) review(ctx context.Context) (*agent.ReviewerResult, error) {
 
 // runReviewer runs the reviewer in a fresh clone of the branch head. It
 // reads the change there with git diff; in the sandbox it can't write the
-// clone (DESIGN §7).
+// clone.
 func (t *ticket) runReviewer(ctx context.Context, head string) (*agent.ReviewerResult, error) {
 	dir := t.workspace().Review()
 	if err := os.RemoveAll(dir); err != nil {
@@ -268,7 +268,7 @@ func (t *ticket) feedbackPass(ctx context.Context, round int, fb tmpl.Feedback) 
 }
 
 // reviewBody is the PR review's body: the verdict mark (an App can't
-// approve its own PR, DESIGN §8.6), the round and the summary.
+// approve its own PR), the round and the summary.
 func (t *ticket) reviewBody(res *agent.ReviewerResult, label string) string {
 	verdict := "Changes requested"
 	if res.Verdict == agent.VerdictApprove {

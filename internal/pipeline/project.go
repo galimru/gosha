@@ -106,7 +106,7 @@ type Project struct {
 }
 
 // PausedError means the project is paused because of its config: no
-// pickups until a valid config lands on the default branch (DESIGN §5.2).
+// pickups until a valid config lands on the default branch.
 type PausedError struct {
 	Project string
 	Commit  string
@@ -202,7 +202,7 @@ type Linear struct {
 }
 
 // ConnectLinear checks the project's team and states. A missing team or
-// state pauses the project, since Gosha can't run it (DESIGN §3).
+// state pauses the project, since Gosha can't run it.
 func (e *Env) ConnectLinear(ctx context.Context, p *Project) (*Linear, error) {
 	c := linear.New(p.Creds.LinearClientID, p.Creds.LinearClientSecret)
 	team, err := c.Team(ctx, p.Config.Linear.Team)
@@ -224,7 +224,7 @@ func (e *Env) pause(ctx context.Context, p *Project, cause error) error {
 }
 
 // pauseNotion pauses the project over Notion access. Only a pickup's
-// context refresh can clear it (DESIGN §6.2).
+// context refresh can clear it.
 func (e *Env) pauseNotion(ctx context.Context, p *Project, cause error) error {
 	return e.setPaused(ctx, p, cause, true)
 }

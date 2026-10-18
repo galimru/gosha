@@ -14,7 +14,7 @@ import (
 var prompts embed.FS
 
 // InstructionsFile is a repo's optional extra instructions, appended to
-// every prompt (DESIGN §5.3).
+// every prompt.
 const InstructionsFile = ".gosha/instructions.md"
 
 // RenderPrompt renders a built-in prompt and appends the repo's
