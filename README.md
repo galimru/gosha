@@ -14,7 +14,7 @@
 
 ---
 
-Gosha turns your planned work into shipped code. You plan in Linear and write specs in Notion. Move a ticket to the **Ready** column, and Gosha takes it from there: it writes the change, has it reviewed, gets CI green, merges it, and tells you on the ticket what shipped.
+Gosha turns your planned work into shipped code. You plan in Linear and write specs in Notion. Once a ticket is ready to build, Gosha takes it from there: it writes the change, has it reviewed, gets CI green, merges it, and tells you on the ticket what shipped.
 
 You decide what gets built and whether it's accepted. Gosha does everything in between, on your own machine or server.
 
