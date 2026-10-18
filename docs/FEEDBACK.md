@@ -128,11 +128,3 @@ Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejec
 **Today (§3):** lists every review round, fix round and check, gathered incrementally into `runs.report`.
 
 **Change:** summary, PR link, assumptions/`left_out` and the deploy line. The rest is on the PR.
-
-## 17. Read-only reviewer
-
-**Status:** agreed
-
-**Today (§7, §8.3):** the reviewer runs tests in a throwaway clone, after `agent.setup`, with the diff cut at 100 KB.
-
-**Change:** the reviewer reads and runs `git diff`; CI runs the tests. No setup, no writable Bash, no `.Diff` truncation.

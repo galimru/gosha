@@ -332,10 +332,10 @@ Every run uses `--output-format stream-json --verbose`; the stream is saved (red
 
 | | Implementer | Reviewer |
 |---|---|---|
-| Working dir | ticket checkout (read/write) | a fresh throwaway clone of the pushed head, `worktrees/<ticket>-review`, removed after the round |
-| Context | ticket + human comments + project context + feedback | ticket + project context + diff vs base + the last round's findings and reply |
+| Working dir | ticket checkout (read/write) | a fresh clone of the pushed head, `worktrees/<ticket>-review`, read-only to it and removed after the round |
+| Context | ticket + human comments + project context + feedback | ticket + project context + the last round's findings and reply; it reads the diff with `git diff` |
 | Session | resumes its own session across address passes when possible | **always fresh** |
-| Tools | all tools (edit, write, shell, local git) | edit/write tools removed; read, search, shell for running tests |
+| Tools | all tools (edit, write, shell, local git) | edit/write tools removed; read, search, shell to read the code (`git diff`, `grep`). CI runs the tests. |
 | Output | commits in the checkout + result JSON | result JSON |
 
 **Agents never get GitHub or Linear credentials,** neither in their environment nor on disk they can reach (§7.1). The implementer commits locally, and **Gosha** pushes, opens PRs, posts comments and merges.
@@ -358,9 +358,9 @@ The two layers need different shapes, because they resolve conflicts differently
   - `auto`: `--permission-mode auto --permission-prompts none`. Claude's classifier approves or blocks each action. Works headless; in M0 it blocked no legitimate step.
   - `bypass`: `--dangerously-skip-permissions`. Everything not explicitly denied is allowed, so the Write and Edit tools can write anywhere the service user can. Explicit opt-in only; `gosha doctor` warns about it.
 - **Deny rules** apply in every mode: no `Read` or `Edit` anywhere in `~/.gosha` except the run's checkout and temp directory, and no `Edit` in the context copy.
-- **Reviewer:** its edit and write tools are *removed* (`--disallowedTools Edit,Write,NotebookEdit`), which holds in any mode, and it gets no `Edit` allow rules, so it can read and run tests but not change code. Its Bash can still write in its own clone (tests need that), which is why it runs in a throwaway clone and never in the implementer's checkout.
+- **Reviewer:** read-only. Its edit and write tools are *removed* (`--disallowedTools Edit,Write,NotebookEdit`), which holds in any mode, and it gets no `Edit` allow rules. In the sandbox its Bash can read its clone but write only the run's temp directory (for the result file), so it runs no tests or builds: CI does. With the sandbox off, only the removed tools and the `auto` classifier stop it from writing, which is why it still runs in its own clone and never in the implementer's checkout.
 - **Sandbox:** Gosha enables **Claude Code's built-in sandbox** (OS-level: Seatbelt on macOS, bubblewrap on Linux) for every agent run, with `failIfUnavailable: true` and `allowUnsandboxedCommands: false` (the agent can't ask to run a command outside it):
-  - **Writable:** the ticket's checkout, the run's temp directory, and toolchain caches. The default cache list depends on the OS (e.g. `~/.cache`, `~/go`, `~/.npm`, and `~/Library/Caches` on macOS), plus `agent.writable` from the global config. The sandbox can't create the missing parent of an allowed directory, so Gosha creates every writable directory before the run.
+  - **Writable:** the ticket's checkout, the run's temp directory, and toolchain caches (the reviewer: only the run's temp directory). The default cache list depends on the OS (e.g. `~/.cache`, `~/go`, `~/.npm`, and `~/Library/Caches` on macOS), plus `agent.writable` from the global config. The sandbox can't create the missing parent of an allowed directory, so Gosha creates every writable directory before the run.
   - **Read-only:** the run's frozen context copy.
   - **No access:** `~/.gosha`, i.e. secrets, the GitHub App key, other projects and the database.
   - **Network:** allowed (dependency installs need it).
@@ -587,7 +587,7 @@ Everything lives in **one directory**, `~/.gosha` of the running user. `--home` 
         ├── secrets.env                      # optional overrides, chmod 600
         ├── repo/                            # bare clone (presence = project registered)
         ├── worktrees/<ticket>/              # ticket checkout (a local clone), one per active ticket
-        ├── worktrees/<ticket>-review/       # the reviewer's throwaway clone, only during a review
+        ├── worktrees/<ticket>-review/       # the reviewer's read-only clone, only during a review
         ├── claude/                          # CLAUDE_CONFIG_DIR for this project's agents (sessions)
         ├── context/                         # Notion mirror (INDEX.md + page tree)
         ├── context.lock                     # serialises refreshes and freezes
@@ -702,7 +702,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - Sandbox layout: the OS sandbox denies `~/.gosha` and re-allows the run's paths; permission rules deny everything around the run's paths, because a permission deny beats any allow. (M2)
 - Gosha runs no repo-defined commands outside the sandbox: there's no `agent.setup`, and agents install dependencies themselves. (M7)
 - Per-project Claude config dir (`projects/<project>/claude/`); prompts go to claude on stdin. (M2)
-- The reviewer runs in a fresh throwaway clone of the pushed head each round, so nothing it does reaches the implementer's checkout or the branch. Each round is a new session, but it's shown the last round's findings and the implementer's reply. (M3)
+- The reviewer runs in a fresh clone of the pushed head each round, so nothing it does reaches the implementer's checkout or the branch. It's read-only: it reads the diff with `git diff`, and CI runs the tests. (M7) Each round is a new session, but it's shown the last round's findings and the implementer's reply. (M3)
 - Human PR feedback (comments, inline comments, review bodies from non-bots) is collected before every review verdict from a per-run cursor, and forces an address pass. Address passes reply on the PR with the implementer's summary. (M3)
 - `agent.timeout` is one budget per pickup, shared by every agent pass in it. (M3) It counts agent passes only, not waiting for CI. (M4)
 - Checks are waited for in-line; the ticket stays the project's active ticket meanwhile. A run is parked only while Blocked. (M4)

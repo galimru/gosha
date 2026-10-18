@@ -17,7 +17,6 @@ type Data struct {
 	Context    Context
 	Branch     string
 	BaseBranch string
-	Diff       string
 	Feedback   Feedback
 	FollowUp   FollowUp
 	Round      int

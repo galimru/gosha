@@ -224,14 +224,3 @@ func TestReviewerUsageLimit(t *testing.T) {
 		t.Errorf("run = %+v", r)
 	}
 }
-
-func TestCapDiff(t *testing.T) {
-	d := strings.Repeat("+line\n", maxDiff/6+100)
-	got := capDiff(d)
-	if len(got) > maxDiff+100 || !strings.Contains(got, "diff cut at 100 KB") || !strings.HasSuffix(strings.Split(got, "…")[0], "\n") {
-		t.Errorf("capDiff: %d bytes, tail %q", len(got), got[len(got)-60:])
-	}
-	if capDiff("+x\n") != "+x\n" {
-		t.Error("short diff changed")
-	}
-}

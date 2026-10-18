@@ -76,13 +76,22 @@ func TestReviewerSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var s struct{ Permissions struct{ Allow []string } }
+	var s struct {
+		Permissions struct{ Allow []string }
+		Sandbox     struct {
+			Filesystem struct{ AllowRead, AllowWrite []string }
+		}
+	}
 	json.Unmarshal(data, &s)
 	if slices.ContainsFunc(s.Permissions.Allow, func(a string) bool { return strings.HasPrefix(a, "Edit") }) {
 		t.Errorf("reviewer may edit: %v", s.Permissions.Allow)
 	}
 	if !slices.Contains(s.Permissions.Allow, "Bash") || !slices.Contains(s.Permissions.Allow, "Read") {
 		t.Errorf("reviewer can't run or read: %v", s.Permissions.Allow)
+	}
+	// Its Bash can read the clone but write only its run dir.
+	if fs := s.Sandbox.Filesystem; !slices.Contains(fs.AllowRead, p.Checkout) || !slices.Equal(fs.AllowWrite, []string{p.RunDir}) {
+		t.Errorf("reviewer sandbox: %+v", fs)
 	}
 }
 
@@ -101,14 +110,13 @@ func TestReviewAndAddressPrompts(t *testing.T) {
 		Project: "demo", Branch: "gosha/NXT-12-add-login", BaseBranch: "main", ResultFile: "/r/result.json", Round: 2,
 		Ticket: tmpl.Ticket{ID: "NXT-12", Title: "Add login", Description: "Users log in.",
 			Comments: []tmpl.Comment{{Author: "Ann", Body: "Use OAuth."}}},
-		Diff:     "+func Login() {}",
 		Feedback: tmpl.Feedback{Review: "- `a.go:3` (must): handle the error", Previous: "Reviewer asked for X."},
 	}
 	got, err := RenderPrompt(context.Background(), repo, "HEAD", "review.md", d)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"review round 2", "# NXT-12: Add login", "+func Login() {}", "Reviewer asked for X.",
+	for _, want := range []string{"review round 2", "# NXT-12: Add login", "Reviewer asked for X.",
 		"git diff origin/main...HEAD", "`/r/result.json`", "request_changes"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("review prompt missing %q:\n%s", want, got)

@@ -365,7 +365,7 @@ func TestTicketToPR(t *testing.T) {
 	// The reviewer ran without edit tools in its own throwaway clone.
 	rs := h.agent.reviews[0]
 	if !slices.Equal(rs.DisallowedTools, agent.ReviewerDisallowed) || rs.Resume != "" ||
-		rs.Dir != s.Dir+"-review" || !strings.Contains(rs.Prompt, "+login.go") || !strings.Contains(rs.Transcript, "2-review.jsonl") {
+		rs.Dir != s.Dir+"-review" || !strings.Contains(rs.Prompt, "git diff origin/main...HEAD") || !strings.Contains(rs.Transcript, "2-review.jsonl") {
 		t.Errorf("reviewer spec = %+v", rs)
 	}
 	if _, err := os.Stat(rs.Dir); !os.IsNotExist(err) {

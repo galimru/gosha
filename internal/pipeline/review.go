@@ -16,10 +16,6 @@ import (
 // <n>-address.jsonl); they get the implementer's permissions.
 const roleAddress = "address"
 
-// maxDiff caps the diff put in the reviewer's prompt. The reviewer can run
-// git diff in its clone for the rest.
-const maxDiff = 100 << 10
-
 // resumeOpen continues a run whose PR is open (DESIGN §8.1, §8.3). From
 // Ready, the round limit resets; new ticket comments or human PR feedback
 // go to the implementer first, otherwise the PR gets a fresh review. An
@@ -139,9 +135,9 @@ func (t *ticket) review(ctx context.Context) (*agent.ReviewerResult, []github.Fe
 	return res, fb, nil
 }
 
-// runReviewer runs the reviewer in a fresh throwaway clone of the branch
-// head, so nothing it does can reach the implementer's checkout or the
-// branch Gosha pushes (DESIGN §7).
+// runReviewer runs the reviewer in a fresh clone of the branch head. It
+// reads the change there with git diff; in the sandbox it can't write the
+// clone (DESIGN §7).
 func (t *ticket) runReviewer(ctx context.Context, head string) (*agent.ReviewerResult, error) {
 	dir := t.checkout() + "-review"
 	if err := os.RemoveAll(dir); err != nil {
@@ -152,15 +148,11 @@ func (t *ticket) runReviewer(ctx context.Context, head string) (*agent.ReviewerR
 	if err != nil || t.run.Step == StepBlocked {
 		return nil, err
 	}
-	diff, err := t.p.Repo.DiffText(ctx, t.run.BaseBranch, t.run.Branch)
-	if err != nil {
-		return nil, err
-	}
 	resultFile := filepath.Join(rp.agent.RunDir, "review.json")
 	prompt, err := agent.RenderPrompt(ctx, t.p.Repo, t.p.Commit, "review.md", tmpl.Data{
 		Project: t.p.Name, Ticket: Ticket(t.issue, nil), Context: t.kb,
 		Branch: t.run.Branch, BaseBranch: t.run.BaseBranch, ResultFile: resultFile,
-		Diff: capDiff(diff), Round: t.run.ReviewRound + 1, Feedback: tmpl.Feedback{Previous: t.previousRound()},
+		Round: t.run.ReviewRound + 1, Feedback: tmpl.Feedback{Previous: t.previousRound()},
 	})
 	if err != nil {
 		return nil, t.block(ctx, err.Error(), nil)
@@ -414,15 +406,3 @@ func location(path string, line int) string {
 func indent(s string) string { return strings.ReplaceAll(strings.TrimSpace(s), "\n", "\n  ") }
 
 func quote(s string) string { return "> " + strings.ReplaceAll(strings.TrimSpace(s), "\n", "\n> ") }
-
-// capDiff cuts a diff at a line boundary once it passes maxDiff.
-func capDiff(d string) string {
-	if len(d) <= maxDiff {
-		return d
-	}
-	cut := d[:maxDiff]
-	if i := strings.LastIndexByte(cut, '\n'); i > 0 {
-		cut = cut[:i+1]
-	}
-	return cut + fmt.Sprintf("… (diff cut at %d KB of %d KB)\n", maxDiff>>10, len(d)>>10)
-}

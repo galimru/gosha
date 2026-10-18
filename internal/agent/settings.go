@@ -49,15 +49,20 @@ func (p Paths) Caches() []string {
 	return out
 }
 
-// writable is every path the agent may write.
-func (p Paths) writable() []string {
+// writable is every path an agent in role may write. The reviewer only
+// reads: it may write its run dir (TMPDIR and the result file) and
+// nothing else.
+func (p Paths) writable(role string) []string {
+	if role == RoleReviewer {
+		return []string{p.RunDir}
+	}
 	return append([]string{p.Checkout, p.RunDir}, p.Caches()...)
 }
 
 // EnsureDirs creates every writable directory: the sandbox can't create
 // the missing parent of an allowed directory (SPIKES §1c).
 func (p Paths) EnsureDirs() error {
-	for _, d := range p.writable() {
+	for _, d := range p.writable(RoleImplementer) {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return err
 		}
@@ -75,8 +80,9 @@ const (
 var ReviewerDisallowed = []string{"Edit", "Write", "NotebookEdit"}
 
 // Settings builds the settings file for an agent run (DESIGN §7.1). The
-// reviewer gets no Edit allows; its edit tools are also removed outright
-// (ReviewerDisallowed), which holds in every permission mode.
+// reviewer gets no Edit allows and, in the sandbox, no writable checkout;
+// its edit tools are also removed outright (ReviewerDisallowed), which
+// holds in every permission mode.
 //
 // The two layers need different shapes (SPIKES §1i): the OS sandbox denies
 // all of Home and re-allows the run's paths with allowRead/allowWrite, but
@@ -105,7 +111,7 @@ func Settings(p Paths, role string, sandbox bool) ([]byte, error) {
 		fs := map[string]any{
 			"denyRead":   []string{p.Home},
 			"allowRead":  nonEmpty(p.Checkout, p.RunDir, p.Context),
-			"allowWrite": p.writable(),
+			"allowWrite": p.writable(role),
 		}
 		if p.Context != "" {
 			fs["denyWrite"] = []string{p.Context}
