@@ -193,6 +193,7 @@ func (t *ticket) deliver(ctx context.Context) error {
 	if _, err := t.issues.CreateComment(ctx, t.issue.ID, t.deliveredComment()); err != nil {
 		return err
 	}
+	t.leave()
 	if err := t.issues.Transition(ctx, t.issue.ID, t.states.InReview.ID); err != nil {
 		return err
 	}

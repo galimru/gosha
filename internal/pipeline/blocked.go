@@ -61,6 +61,7 @@ func (t *ticket) blockWith(ctx context.Context, reason string, questions []strin
 	if _, err := t.issues.CreateComment(ctx, t.issue.ID, b.String()); err != nil {
 		return err
 	}
+	t.leave()
 	if err := t.issues.Transition(ctx, t.issue.ID, t.states.Blocked.ID); err != nil {
 		return err
 	}

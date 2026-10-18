@@ -57,12 +57,14 @@ type issueOps interface {
 	CreateComment(ctx context.Context, issueID, body string) (string, error)
 	CreateAttachment(ctx context.Context, issueID, link, title, subtitle string) error
 	Comments(ctx context.Context, issueID string) ([]linear.Comment, error)
+	Issue(ctx context.Context, id string) (*linear.Issue, error)
 }
 
 // prOps is the GitHub surface a ticket run uses.
 type prOps interface {
 	Token(ctx context.Context) (string, error)
 	PR(ctx context.Context, number int) (*github.PR, error)
+	ClosePR(ctx context.Context, number int) error
 	CreatePR(ctx context.Context, branch, base, title, body string) (*github.PR, error)
 	CreateReview(ctx context.Context, number int, sha, body string, comments []github.ReviewComment) (int64, error)
 	CreateComment(ctx context.Context, number int, body string) error
@@ -111,6 +113,8 @@ type ticket struct {
 	// recheck is set when the next review is of a fix for failed checks or
 	// conflicts: approving it doesn't use up a review round.
 	recheck bool
+	// moved is how the pickup learns that a human moved the ticket.
+	moved mover
 }
 
 // agentPass waits for an agent slot, then starts an agent pass bounded by
@@ -141,6 +145,9 @@ func (e *Env) Pass(ctx context.Context, name, only string) (bool, error) {
 	}
 	lin, err := e.ConnectLinear(ctx, p)
 	if err != nil {
+		return false, err
+	}
+	if err := e.reconcileCanceled(ctx, p, lin.Client, p.Install); err != nil {
 		return false, err
 	}
 	c, err := e.interrupted(ctx, name, lin, only)
@@ -251,11 +258,17 @@ func (e *Env) handle(ctx context.Context, p *Project, st *linear.States, is issu
 	if err := t.claim(ctx, c.Comments); err != nil {
 		return err
 	}
-	err := t.drive(ctx)
+	wctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	stop := t.watch(wctx, cancel)
+	err := t.drive(wctx)
+	stop()
 	var le *agent.LimitError
 	switch {
 	case err == nil:
 		return nil
+	case ctx.Err() == nil && errors.Is(context.Cause(wctx), errTicketMoved):
+		return t.stopped(ctx)
 	case errors.As(err, &le):
 		e.Notify.Send(notify.Event{Project: p.Name, Text: fmt.Sprintf("%s · ⏸ %v", t.issue.Identifier, le)})
 		return err

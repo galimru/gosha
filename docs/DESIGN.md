@@ -515,9 +515,13 @@ Post the **Delivered** comment, move the ticket to In Review, and notify Telegra
 Post the **Blocked** comment, move the ticket to Blocked, and notify Telegram. Keep the branch, PR and checkout for resume; the run stays open (step `blocked`), so moving the ticket back to Ready resumes it. Unexpected failures after the claim (an agent crash, an invalid result after the retry, a git or API error) also go Blocked, with the error in the comment. A usage limit or a shutdown doesn't: the ticket stays In Progress and the run continues on the next pass (§8.11, §10).
 
 ### 8.10 Cancel / pause
-While a ticket is active, the poller re-reads its state every 30s.
-- If it has left In Progress because of anyone other than Gosha → cancel the context and kill the claude process group.
-- Then: Canceled → close the PR and delete the branch. Any other state → leave everything as it is (pause).
+While a ticket is active (an agent running, or waiting for CI or the deploy), Gosha re-reads its state every 30s.
+- If it has left In Progress because of anyone other than Gosha → cancel the pickup and kill the claude process group. Gosha's own moves (Blocked, In Review) don't count.
+- Then:
+  - **Canceled** (or duplicate) → close the PR, delete the branch, remove the ticket's workspace and finish the run.
+  - **Any other state** (Backlog, Todo, …) → **pause**: leave the branch, PR, workspace and run as they are. Ready later resumes the run like any other (§8.1).
+- Neither goes to Telegram or Linear: a human did it.
+- A ticket canceled while Gosha wasn't watching it (Blocked, or while the daemon was down) is cleaned up the same way on the project's next pass, which checks every open run's ticket first.
 
 ### 8.11 Agent usage limits
 Claude's stream reports usage on every run as a `rate_limit_event` (`status`, `resetsAt`, and utilization of the five-hour and seven-day windows). A `status` other than `allowed`, or a failed result caused by the limit, means a usage limit: Gosha pauses **all** agent scheduling until `resetsAt` and then retries the same step. The ticket stays In Progress. This goes to Telegram (hit + resumed) and to the logs, never to Linear. Limit-related time doesn't count toward `agent.timeout`.
