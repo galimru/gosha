@@ -145,8 +145,6 @@ Statuses: **proposed** (open for discussion), **agreed** (to implement), **rejec
 
 **Why rejected:** the code already reads the config once per pass (`Pass` in `internal/pipeline/ticket.go`) and takes the ticket as far as it can with it, so a change on `main` doesn't affect a pass in progress. A change only matters when an interrupted run continues in a later pass (usage limit, restart, Blocked → Ready): a valid new config is used, which is what you want after a fix, and an invalid one pauses the project until `main` is fixed. Snapshotting would add storing each run's config in the database, for no real gain.
 
-**DESIGN.md fix instead (§5.2):** replace "A ticket already in flight stops at the next step boundary and stays In Progress, so it can resume" with: the config is read once at the start of each pass, and a pass uses it to the end. A run that continues in a later pass uses the config on `main` at that time; if that config is invalid, the project is paused and the run waits, still In Progress, until `main` is fixed.
-
 ## 14. Telegram for alerts only
 
 **Status:** agreed
