@@ -46,7 +46,7 @@ You decide what gets built and whether it's accepted. Gosha does everything in b
 curl -fsSL https://raw.githubusercontent.com/galimru/gosha/main/install.sh | sh
 ```
 
-This installs the latest release into `~/.local/bin`, after checking it against the release's checksums. `sh -s -- --version v0.x.y` pins a release and `--prefix <dir>` picks another directory. With a Go toolchain, `go install github.com/galimru/gosha/cmd/gosha@latest` also works.
+This installs the latest release into `~/.local/bin`, after checking it against the release's checksums. `sh -s -- --version v0.x.y` pins a release and `--prefix <dir>` picks another directory. With a Go toolchain, `go install github.com/galimru/gosha/cmd/gosha@latest` also works, and `make install` in a checkout installs that checkout's code in the same place, to try a branch before it's released.
 
 Later, `gosha upgrade` replaces the binary with the latest release and restarts the service.
 
