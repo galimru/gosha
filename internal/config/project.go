@@ -14,6 +14,9 @@ const ProjectFile = ".gosha/config.yaml"
 
 var projectName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 
+// ValidName reports whether name is a valid project name.
+func ValidName(name string) bool { return projectName.MatchString(name) }
+
 // Project is a project's .gosha/config.yaml.
 type Project struct {
 	Name   string       `yaml:"name"`
@@ -97,7 +100,7 @@ func ParseProject(data []byte, commit string) (*Project, error) {
 	switch {
 	case p.Name == "":
 		return nil, fe("name", "required")
-	case !projectName.MatchString(p.Name):
+	case !ValidName(p.Name):
 		return nil, fe("name", "must be lowercase letters, digits, '-' or '_'")
 	case p.Linear.Team == "":
 		return nil, fe("linear.team", "required")

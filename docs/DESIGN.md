@@ -671,7 +671,7 @@ The project's config is **not** in this tree; it's read from the repo (§5.2). `
 ### 11.6 CLI
 Commands act on the `~/.gosha` of the user running them, normally the same user the service runs as.
 
-- `gosha init [path] --team NXT --notion <page> [--name]`: run in a local checkout; writes a starter `.gosha/config.yaml` to commit, with the required fields set and every optional one commented out with its default. The name defaults to the directory's. It never overwrites an existing config, and writes nothing that `validate` would reject
+- `gosha init [path]`: run in a local checkout; asks for the project name (default: the directory's), the Linear team key and the Notion root page, re-asking on an invalid answer, and writes a starter `.gosha/config.yaml` to commit, with those fields set and every optional one commented out with its default. It takes no flags: scripts write the file directly. It never overwrites an existing config, and writes nothing that `validate` would reject
 - `gosha add <repo-url>` / `remove` / `list`
 - `gosha config show <project>`: the effective config, as YAML: the file on the default branch with every default filled in
 - `gosha validate [path]`: an offline check of a repo's `.gosha/config.yaml` (it parses, fields are valid, referenced files exist). It needs no secrets or network, so it can run in the project's CI.

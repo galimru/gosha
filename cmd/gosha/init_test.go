@@ -12,9 +12,15 @@ import (
 
 func runCLI(t *testing.T, args ...string) (string, error) {
 	t.Helper()
+	return runCLIIn(t, "", args...)
+}
+
+func runCLIIn(t *testing.T, stdin string, args ...string) (string, error) {
+	t.Helper()
 	a := &app{}
 	root := a.rootCmd()
 	var out bytes.Buffer
+	root.SetIn(strings.NewReader(stdin))
 	root.SetOut(&out)
 	root.SetErr(&out)
 	root.SetArgs(append([]string{"--home", t.TempDir()}, args...))
@@ -22,14 +28,17 @@ func runCLI(t *testing.T, args ...string) (string, error) {
 	return out.String(), err
 }
 
+const page = "1a2b3c4d5e6f708192a3b4c5d6e7f809"
+
 func TestInit(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "Next Desk")
 	os.MkdirAll(dir, 0o755)
-	if _, err := runCLI(t, "init", dir); err == nil || !strings.Contains(err.Error(), "--team and --notion required") {
-		t.Fatalf("missing flags: %v", err)
-	}
-	if _, err := runCLI(t, "init", dir, "--team", "NXT", "--notion", "1a2b3c4d5e6f708192a3b4c5d6e7f809"); err != nil {
+	out, err := runCLIIn(t, "\nnxt\n"+page+"\n", "init", dir)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Project name [next-desk]: ") {
+		t.Errorf("prompt = %q", out)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, config.ProjectFile))
 	if err != nil {
@@ -39,17 +48,37 @@ func TestInit(t *testing.T) {
 	if err != nil || p.Name != "next-desk" || p.Linear.Team != "NXT" {
 		t.Fatalf("written config = %+v, %v", p, err)
 	}
-	if _, err := runCLI(t, "init", dir, "--team", "NXT", "--notion", "x"); err == nil || !strings.Contains(err.Error(), "already exists") {
-		t.Errorf("overwrite: %v", err)
+	// An existing config fails before any question.
+	if out, err := runCLIIn(t, "", "init", dir); err == nil || !strings.Contains(err.Error(), "already exists") || strings.Contains(out, "Project name") {
+		t.Errorf("overwrite: %v, %q", err, out)
 	}
 }
 
-func TestInitRejectsInvalid(t *testing.T) {
+func TestInitAsksAgain(t *testing.T) {
 	dir := t.TempDir()
-	if _, err := runCLI(t, "init", dir, "--team", "NXT", "--notion", "not a page"); err == nil || !strings.Contains(err.Error(), "notion.root_page") {
-		t.Fatalf("invalid page: %v", err)
+	out, err := runCLIIn(t, "Bad Name\ndesk\n\nNXT\nnot a page\n"+page+"\n", "init", dir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, config.ProjectFile)); !os.IsNotExist(err) {
-		t.Error("invalid config left behind")
+	for _, want := range []string{"must be lowercase", "required", "must be a Notion page URL or id"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, config.ProjectFile))
+	if p, err := config.ParseProject(data, ""); err != nil || p.Name != "desk" {
+		t.Fatalf("written config = %+v, %v", p, err)
+	}
+}
+
+func TestInitNeedsInput(t *testing.T) {
+	dir := t.TempDir()
+	for _, in := range []string{"", "desk\nNXT\n"} {
+		if _, err := runCLIIn(t, in, "init", dir); err == nil || !strings.Contains(err.Error(), "answers on stdin") {
+			t.Errorf("stdin %q: %v", in, err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, config.ProjectFile)); !os.IsNotExist(err) {
+			t.Errorf("stdin %q: config written", in)
+		}
 	}
 }

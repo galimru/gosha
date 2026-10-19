@@ -90,7 +90,7 @@ TELEGRAM_BOT_TOKEN=…
 **4. A project.** In a checkout of its repo:
 
 ```sh
-gosha init --team NXT --notion https://www.notion.so/…   # writes .gosha/config.yaml
+gosha init   # asks for the Linear team and Notion page, writes .gosha/config.yaml
 git add .gosha && git commit -m "chore: configure gosha" && git push
 ```
 

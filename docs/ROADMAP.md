@@ -173,7 +173,7 @@ Changes from the plan:
 - **Only the daemon and `gosha run` rotate the log;** short commands append, so they never rotate it from under the daemon. Log lines were already tagged with their project, so no per-project loggers were needed.
 - **The digest's Ready counts come from each project's last poll,** so the digest never fetches a repo concurrently with its supervisor.
 - **A run replaced in the same pickup** (PR closed unmerged, or merged by hand) still loses only its checkout: the new run uses the same workspace, frozen context included. Leftover workspaces with no run are removed after `retention`.
-- **`gosha init` takes the required fields as flags** (`--team`, `--notion`) and refuses to write a config `validate` would reject.
+- **`gosha init` asks for the required fields** (name, Linear team, Notion page) instead of taking flags, and refuses to write a config `validate` would reject. Scripts write the file directly.
 
 - Daemon: multiple projects, global scheduler, panic isolation
 - Crash recovery, cancel and pause (Backlog/Todo/Canceled), usage-limit pause/resume
