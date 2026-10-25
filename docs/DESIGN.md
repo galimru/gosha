@@ -663,6 +663,7 @@ The project's config is **not** in this tree; it's read from the repo (§5.2). `
   - `status` doesn't need root. It shows the service manager's view (state, PID, uptime). For what Gosha is doing, use `gosha status`.
   - `stop` sends SIGTERM, so in-flight runs stay resumable.
   - On macOS, `stop` unloads the daemon, so it stays stopped until `start` (KeepAlive would otherwise restart it).
+- **No projects needed:** the service can be installed and started before any project is added. The daemon rescans `projects/` every minute, so `gosha add` and `gosha remove` take effect without a restart.
 - **Unsupported service manager** (e.g. a Linux host without systemd): `install` fails with a clear message. `--print` plus running `gosha daemon` under your own supervisor still works.
 - **SIGTERM** finishes in-flight API calls, kills agents, and leaves runs resumable.
 - A container image is a possible later option, not part of the current plan.
@@ -691,7 +692,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - `gosha daemon`: every registered project, in the foreground (what the service runs, §11.5)
 
 ### 11.7 Host setup
-`gosha setup` takes a new host from nothing to a passing `gosha doctor`, except for the projects themselves (`gosha init` in each repo, then `gosha add`). Everything it writes can also be written by hand (§5.1, §5.4); it's a convenience, not the only way.
+`gosha setup` takes a new host from nothing to a passing `gosha doctor`, ready for `gosha service install`. It's about the host only: projects are added separately, before or after the service is installed (a running daemon picks up a new project within a minute, §11.5). Everything it writes can also be written by hand (§5.1, §5.4); it's a convenience, not the only way.
 
 ```
 $ gosha setup
@@ -702,7 +703,7 @@ Telegram  bot token: ••••                              ✓ @gosha_alerts
           add the bot to your channel as an admin…     ✓ "Gosha alerts" (-1001234567890), test message sent
 GitHub    create a new app, or use one you have? [new]  ✓ gosha-galimru (app 123456), key saved
           install it on each project repo: https://github.com/apps/gosha-galimru/installations/new
-next: in each project's checkout, `gosha init`, then `gosha add <repo-url>` here
+next: gosha doctor, then sudo gosha service install
 ```
 
 **Steps,** in this order. Each prints what to click where a value has to be created by hand, and checks the value before moving on, re-asking when the check fails:
@@ -727,7 +728,7 @@ next: in each project's checkout, `gosha init`, then `gosha add <repo-url>` here
 - Secrets are typed without echo and never printed back.
 - It refuses root, like every command (§11.2), and writes the `~/.gosha` of the user running it, created with mode `700`.
 - It sets up only the shared `secrets.env`; per-project overrides are edited with `gosha secrets edit --project`.
-- It doesn't install the service: that needs root (§11.5), so setup ends by printing the next steps.
+- It doesn't install the service: that needs root (§11.5), so setup ends by printing the next steps. It never mentions projects.
 - `gosha doctor` points at `gosha setup` for a missing `config.yaml`, `secrets.env` or GitHub App key.
 
 ## 12. Security
