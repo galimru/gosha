@@ -181,7 +181,7 @@ Changes from the plan:
 - Log rotation, daily digest
 - ~~Verify the agent sandbox on Linux~~ (moved to M9)
 - Remaining CLI: `init`, `config show`, `logs`
-- Releases (DESIGN §11.4): GoReleaser builds macOS and Linux binaries (amd64, arm64) with `main.version` set, and a workflow publishes a GitHub release on every merge to `main` that has a `feat`, `fix` or `perf` commit since the last tag. Versions stay `0.x`: `feat` and breaking changes bump the minor, everything else the patch
+- Releases (DESIGN §11.4): GoReleaser builds macOS and Linux binaries (amd64, arm64) with `main.version` set, and a workflow run by hand publishes a GitHub release from `main` when it has a `feat`, `fix` or `perf` commit since the last tag. Versions stay `0.x`: `feat` and breaking changes bump the minor, everything else the patch
 - Install and upgrade (DESIGN §11.4): `install.sh` (download, checksum, install to `~/.local/bin`), `gosha upgrade` (replace the binary, restart the service), README getting started switched to `install.sh`
 - Stable schema before the first release (DESIGN §10): squash `001`–`005` into one baseline migration; afterwards migrations are append-only, `gosha.db` is backed up before applying one, and a database newer than the binary is refused
 - Retention (DESIGN §11.3): workspaces removed when a run ends any way (not only on merge), idle Blocked workspaces and finished runs' transcripts removed after `retention`, disk use in `gosha doctor`, and `gosha prune [--dry-run] [--older-than]` to run the same cleanup on demand

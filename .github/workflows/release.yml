@@ -1,10 +1,10 @@
 name: release
 
-# Every merge to main with a feat, fix or perf commit since the last tag
-# publishes a release: the next version comes from the commit types.
+# Run by hand (Actions > release > Run workflow, or `gh workflow run release`)
+# to publish main as a release. It covers every feat, fix or perf commit since
+# the last tag, and the next version comes from their commit types.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   release:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -22,6 +23,8 @@ jobs:
           fetch-depth: 0
       - id: next
         run: echo "tag=$(sh .github/scripts/next-version.sh)" >> "$GITHUB_OUTPUT"
+      - if: steps.next.outputs.tag == ''
+        run: echo "::notice::no feat, fix or perf commit since the last tag, nothing to release"
       - if: steps.next.outputs.tag != ''
         uses: actions/setup-go@v6
         with:
