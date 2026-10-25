@@ -683,7 +683,7 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - `gosha context path <project>`: print where the mirror lives
 - `gosha context show <project>`: print `INDEX.md`, the page tree the agent starts from
 - `gosha run <project> [--once] [--ticket NXT-12] [--dry-run]`: foreground loop for one project, for development and prompt tuning. It takes the project's run lock, so it refuses a project the daemon is running. `--once` handles a single ticket. `--dry-run` does a single pickup pass and prints what would happen (pickup, queue, skipped tickets and why, mode, branch), without changing anything in Linear or GitHub or posting to Telegram.
-- `gosha secrets edit`: opens `secrets.env` in `$EDITOR`
+- `gosha secrets edit`: opens `secrets.env` in `$VISUAL`, else `$EDITOR`, else `nano`, creating it from a template with mode 600 if missing
 - `gosha service install|uninstall|start|stop|restart|status`
 - `gosha prune [project] [--dry-run] [--older-than 7d]`: apply the cleanup rules now (§11.3). `--dry-run` lists what would be removed and how much space it frees; `--older-than` overrides `retention` for this run.
 - `gosha upgrade [--check] [--version v0.x.y]`: replace the binary with a release and restart the service (§11.4)

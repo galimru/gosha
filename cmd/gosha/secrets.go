@@ -70,13 +70,16 @@ func (a *app) secretsCmd() *cobra.Command {
 				editor = os.Getenv("EDITOR")
 			}
 			if editor == "" {
-				editor = "vi"
+				editor = "nano"
 			}
 			// $EDITOR may carry arguments ("code --wait").
 			parts := strings.Fields(editor)
 			ed := exec.CommandContext(cmd.Context(), parts[0], append(parts[1:], path)...)
 			ed.Stdin, ed.Stdout, ed.Stderr = os.Stdin, os.Stdout, os.Stderr
 			if err := ed.Run(); err != nil {
+				if errors.Is(err, exec.ErrNotFound) {
+					return fmt.Errorf("%s not found: set $EDITOR, or edit %s directly", parts[0], path)
+				}
 				return fmt.Errorf("%s: %w", editor, err)
 			}
 
