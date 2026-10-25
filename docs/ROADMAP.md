@@ -196,6 +196,7 @@ Changes from the plan:
 
 Every milestone so far was built against unit tests and fakes, and M1–M7 are each pending their end-to-end check. M9 runs all of them, and everything else in DESIGN §2, on real services. Results and anything that had to change go in [E2E.md](E2E.md), the same way spikes went in SPIKES.md. A failure is fixed (and DESIGN.md updated if behaviour changes) before M9 is done.
 
+- **Host setup** (DESIGN §11.7): `gosha setup` for Claude, Linear, Notion, Telegram (chat id from the bot's updates) and the GitHub App (manifest flow, with a manual fallback); `doctor` points at it; README getting started switched to it. Both test hosts below are set up with it
 - **Test setup,** kept for later regressions:
   - a GitHub repo with a small app, a CI workflow and a deploy workflow, with the Gosha GitHub App installed
   - a Linear team with Gosha's states, a Notion root page with a few spec pages, a Telegram channel

@@ -478,7 +478,7 @@ For the PR's **head SHA**:
 
 ### 8.6 Identities
 
-**GitHub: the Gosha GitHub App.** Gosha acts on GitHub as a **GitHub App** that the operator creates once (free) and installs on each project repo. PRs, commits, reviews and merges show up as `gosha[bot]`, not as a person.
+**GitHub: the Gosha GitHub App.** Gosha acts on GitHub as a **GitHub App** that the operator creates once (free, normally with `gosha setup`, §11.7) and installs on each project repo. PRs, commits, reviews and merges show up as `gosha[bot]`, not as a person.
 
 - **Auth:** the app's private key signs a JWT, which is exchanged for an **installation token** per repo. Installation tokens last 1h, and Gosha refreshes them automatically. No personal `gh` login or token is ever used.
 - **Git:** Gosha pushes over HTTPS with the installation token, passed per command through `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` (an `http.extraheader`), so it never appears in argv or any git config file. `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1` keep the user's git config out.
@@ -495,7 +495,7 @@ For the PR's **head SHA**:
 - **Reviews:** an app can't approve its own PR, so reviewer verdicts are `COMMENT` reviews marked ✅/❌. A free private repo has no branch protection, so an approval wouldn't gate anything anyway. Gosha's own merge gate is what counts. *Optional later:* a second app, "gosha-reviewer", for real `APPROVE` / `REQUEST_CHANGES` reviews.
 
 **Linear: an app actor.** Gosha acts on Linear as an **OAuth app**, so comments, state changes and attachments appear as the app (e.g. "Gosha"), not as a person.
-- **Setup:** the operator creates an OAuth application in the Linear workspace (Settings → API) with **Client credentials** enabled, and puts its client id and secret in `secrets.env` (`LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`).
+- **Setup:** the operator creates an OAuth application in the Linear workspace (Settings → API) with **Client credentials** enabled, and puts its client id and secret in `secrets.env` (`LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`), normally through `gosha setup` (§11.7).
 - **Tokens:** Gosha uses the **`client_credentials` grant** (scopes `read,write,issues:create,comments:create`). No browser or paste-back is needed. Tokens last 30 days and have no refresh token, so Gosha keeps the current one in memory and simply requests a new one on expiry or a 401.
 - `gosha doctor` checks the credentials and shows which actor Gosha acts as.
 
@@ -663,6 +663,7 @@ The project's config is **not** in this tree; it's read from the repo (§5.2). `
   - `status` doesn't need root. It shows the service manager's view (state, PID, uptime). For what Gosha is doing, use `gosha status`.
   - `stop` sends SIGTERM, so in-flight runs stay resumable.
   - On macOS, `stop` unloads the daemon, so it stays stopped until `start` (KeepAlive would otherwise restart it).
+- **No projects needed:** the service can be installed and started before any project is added. The daemon rescans `projects/` every minute, so `gosha add` and `gosha remove` take effect without a restart.
 - **Unsupported service manager** (e.g. a Linux host without systemd): `install` fails with a clear message. `--print` plus running `gosha daemon` under your own supervisor still works.
 - **SIGTERM** finishes in-flight API calls, kills agents, and leaves runs resumable.
 - A container image is a possible later option, not part of the current plan.
@@ -672,6 +673,7 @@ The project's config is **not** in this tree; it's read from the repo (§5.2). `
 ### 11.6 CLI
 Commands act on the `~/.gosha` of the user running them, normally the same user the service runs as.
 
+- `gosha setup`: set up the host interactively: Claude, Linear, Notion, Telegram and the GitHub App, checking each answer as it goes, then writing `config.yaml`, `secrets.env` and `github-app.pem` (§11.7)
 - `gosha init [path]`: run in a local checkout; asks for the project name (default: the directory's), the Linear team key and the Notion root page, re-asking on an invalid answer, and writes a starter `.gosha/config.yaml` to commit, with those fields set and every optional one commented out with its default. It takes no flags: scripts write the file directly. It never overwrites an existing config, and writes nothing that `validate` would reject
 - `gosha add <repo-url>` / `remove` / `list`
 - `gosha config show <project>`: the effective config, as YAML: the file on the default branch with every default filled in
@@ -688,6 +690,46 @@ Commands act on the `~/.gosha` of the user running them, normally the same user 
 - `gosha prune [project] [--dry-run] [--older-than 7d]`: apply the cleanup rules now (§11.3). `--dry-run` lists what would be removed and how much space it frees; `--older-than` overrides `retention` for this run.
 - `gosha upgrade [--check] [--version v0.x.y]`: replace the binary with a release and restart the service (§11.4)
 - `gosha daemon`: every registered project, in the foreground (what the service runs, §11.5)
+
+### 11.7 Host setup
+`gosha setup` takes a new host from nothing to a passing `gosha doctor`, ready for `gosha service install`. It's about the host only: projects are added separately, before or after the service is installed (a running daemon picks up a new project within a minute, §11.5). Everything it writes can also be written by hand (§5.1, §5.4); it's a convenience, not the only way.
+
+```
+$ gosha setup
+Claude    token from `claude setup-token`: ••••••••
+Linear    client id: …  client secret: ••••            ✓ acts as "Gosha" in Acme
+Notion    API token: ••••                              ✓ integration "Gosha" in Acme
+Telegram  bot token: ••••                              ✓ @gosha_alerts_bot
+          add the bot to your channel as an admin…     ✓ "Gosha alerts" (-1001234567890), test message sent
+GitHub    create a new app, or use one you have? [new]  ✓ gosha-galimru (app 123456), key saved
+          install it on each project repo: https://github.com/apps/gosha-galimru/installations/new
+next: gosha doctor, then sudo gosha service install
+```
+
+**Steps,** in this order. Each prints what to click where a value has to be created by hand, and checks the value before moving on, re-asking when the check fails:
+
+| Step | Asks for | Check |
+|---|---|---|
+| Claude | `CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token` (run by the operator, since its output is interactive) | none: checking it would cost usage, so a bad token shows up on the first agent pass |
+| Linear | `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET` (Linear has no API to create the OAuth app) | a `client_credentials` token is requested, and the actor it acts as is shown |
+| Notion | `NOTION_TOKEN`, from an internal integration ("API token") with only Read content | `users/me`: the integration and its workspace |
+| Telegram | `TELEGRAM_BOT_TOKEN`; then the operator adds the bot to the channel as an admin, and `telegram.chat_id` is found from that event | `getMe` for the token; for the channel, its title is confirmed and a test message is sent |
+| GitHub | a new app, created through GitHub's app manifest flow (below), or an existing one: its id and the path of its private key | the app is looked up with its key, and its name is shown; its permissions are compared with §8.6 |
+
+- **Telegram's chat id** comes from `getUpdates`: Gosha long-polls it until a `my_chat_member` update shows the bot made an administrator of a channel (or a `channel_post` arrives in one), and asks the operator to confirm that channel's title. No chat id is ever typed.
+- **GitHub app manifest flow:** Gosha serves a page on `127.0.0.1` (a random port) and opens it in the browser. The page posts a manifest to GitHub's new-app form (on the operator's account, or an organisation they name) with Gosha's permissions (§8.6, no Workflows), no webhook, a private app, and the local page as its redirect. The operator only names the app and clicks Create. GitHub redirects back with a one-time code, which Gosha converts (`POST /app-manifests/{code}/conversions`) into the app id and private key; the key is written to `github-app.pem` with mode `600`. Gosha then prints the app's install URL; installing it on repos stays a human step, since the repos are the operator's choice.
+- **An existing app** (made by hand, or by setup on another host): the operator gives its App ID and the path of a private key downloaded from the app's settings page (a new one can be generated there at any time); the key is copied to `github-app.pem` with mode `600`. A missing permission fails the step and names it, with a link to the app's permission settings; extra permissions are a warning, and Workflows gets one that says agents could then change CI (§8.6).
+- **Without a browser** (none can be opened, e.g. over SSH): Gosha prints the local URL instead, to open through an SSH tunnel (`ssh -L <port>:127.0.0.1:<port>`), or the operator uses an existing app as above, created by hand from the steps setup prints.
+
+**Re-running:** setup can be run any number of times, e.g. to replace one token. A value that's already set is shown as set, and Enter keeps it; kept values are checked like new ones, so a re-run also verifies the host. Each step is saved as soon as it passes, so stopping halfway keeps the finished steps. `secrets.env` is updated key by key and keeps its other lines; `config.yaml` gets only `github_app.app_id` and `telegram.chat_id` set and keeps everything else, comments included. A new `config.yaml` has every other option commented out with its default, like `gosha init` (§11.6).
+
+**Rules:**
+- Interactive only, like `gosha init`: no flags for the answers, and it refuses to run without a terminal. Scripts write the files directly.
+- Secrets are typed without echo and never printed back.
+- It refuses root, like every command (§11.2), and writes the `~/.gosha` of the user running it, created with mode `700`.
+- It sets up only the shared `secrets.env`; per-project overrides are edited with `gosha secrets edit --project`.
+- It doesn't install the service: that needs root (§11.5), so setup ends by printing the next steps. It never mentions projects.
+- `gosha doctor` points at `gosha setup` for a missing `config.yaml`, `secrets.env` or GitHub App key.
 
 ## 12. Security
 
@@ -752,6 +794,7 @@ Each entry is a decision in force, with why where it isn't obvious. Where it rep
 - Secrets are read by fixed key names from `projects/<project>/secrets.env`, then `secrets.env`, then the environment. Config files hold no secrets and no references to them.
 - A project resumes only after the config, Linear and Notion checks all pass, so a pause for one reason isn't cleared by another check passing.
 - `gosha validate` is an offline check of a repo's config, so it can run in the project's CI; `gosha doctor` checks everything about the host, including credentials, Linear and Notion.
+- Host setup is one interactive command, `gosha setup`, separate from `gosha init`: one sets up the host once, the other a repo each time, and they write different files. The GitHub App is created with GitHub's app manifest flow so its permissions can't be set wrong; the Telegram chat id is read from the bot's own updates. The files stay hand-editable, and setup is never required.
 
 **Context**
 - Notion mirror: page tree → file tree (`README.md` for pages with children, `INDEX.md` map). Databases and pages linked from tickets but outside the tree aren't mirrored.
