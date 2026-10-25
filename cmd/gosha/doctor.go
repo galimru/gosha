@@ -78,7 +78,7 @@ func (a *app) doctor(ctx context.Context, projects []string) []check {
 
 	fi, err := os.Stat(a.home.Dir())
 	if err != nil {
-		add("fail", "home %s: %v", a.home.Dir(), err)
+		add("fail", "home %s: %v%s", a.home.Dir(), err, setupHint(err))
 		return cs
 	}
 	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
@@ -98,13 +98,13 @@ func (a *app) doctor(ctx context.Context, projects []string) []check {
 		} else if _, err := os.Stat(f); err == nil {
 			add("ok", "%s", f)
 		} else if errors.Is(err, fs.ErrNotExist) && f == a.home.Secrets() {
-			add("warn", "%s doesn't exist: create it with `gosha secrets edit`", f)
+			add("warn", "%s doesn't exist: run `gosha setup`", f)
 		}
 	}
 
 	g, err := config.LoadGlobal(a.home)
 	if err != nil {
-		add("fail", "%v", err)
+		add("fail", "%v%s", err, setupHint(err))
 		return cs
 	}
 	add("ok", "global config %s (concurrency %d)", a.home.Config(), g.Concurrency)
@@ -183,6 +183,14 @@ func (a *app) doctorProject(ctx context.Context, env *pipeline.Env, name string)
 		add("ok", "Notion root page %q (as %s in %s)", page.Title(), bot.Name, bot.Bot.WorkspaceName)
 	}
 	return cs
+}
+
+// setupHint points at gosha setup when a file it writes is missing.
+func setupHint(err error) string {
+	if errors.Is(err, fs.ErrNotExist) {
+		return ": run `gosha setup`"
+	}
+	return ""
 }
 
 // checkProject fails unless name is a registered project.

@@ -15,15 +15,6 @@ import (
 	"github.com/galimru/gosha/internal/config"
 )
 
-const secretsTemplate = `# Gosha secrets: KEY=value, one per line. Keep this file chmod 600.
-# Gosha reads these keys by name; a project's own secrets.env overrides any of them.
-LINEAR_CLIENT_ID=
-LINEAR_CLIENT_SECRET=
-NOTION_TOKEN=
-TELEGRAM_BOT_TOKEN=
-CLAUDE_CODE_OAUTH_TOKEN=
-`
-
 const projectSecretsTemplate = `# Per-project overrides of ~/.gosha/secrets.env: KEY=value, one per line.
 `
 
@@ -38,7 +29,7 @@ func (a *app) secretsCmd() *cobra.Command {
 		Short: "Open secrets.env in $EDITOR (created with mode 600 if missing)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			path, tmpl := a.home.Secrets(), secretsTemplate
+			path, tmpl := a.home.Secrets(), config.SecretsTemplate
 			if project != "" {
 				if err := a.checkProject(project); err != nil {
 					return err

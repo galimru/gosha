@@ -214,12 +214,16 @@ type Viewer struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	DisplayName string `json:"displayName"`
+	// Organization is the workspace the actor belongs to.
+	Organization struct {
+		Name string `json:"name"`
+	} `json:"organization"`
 }
 
 // Viewer returns the token's actor, normally the app user.
 func (c *Client) Viewer(ctx context.Context) (*Viewer, error) {
 	var out struct{ Viewer Viewer }
-	if err := c.do(ctx, `query { viewer { id name displayName } }`, nil, &out); err != nil {
+	if err := c.do(ctx, `query { viewer { id name displayName organization { name } } }`, nil, &out); err != nil {
 		return nil, err
 	}
 	return &out.Viewer, nil

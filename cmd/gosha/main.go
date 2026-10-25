@@ -68,7 +68,7 @@ func (a *app) rootCmd() *cobra.Command {
 	root.PersistentFlags().StringVar(&a.homeFlag, "home", "", "Gosha home directory (default $GOSHA_HOME or ~/.gosha)")
 	root.PersistentFlags().StringVar(&a.logLevel, "log-level", "info", "log level: debug, info, warn, error")
 	root.AddCommand(
-		a.addCmd(), a.removeCmd(), a.listCmd(), a.validateCmd(), a.doctorCmd(),
+		a.setupCmd(), a.addCmd(), a.removeCmd(), a.listCmd(), a.validateCmd(), a.doctorCmd(),
 		a.secretsCmd(), a.statusCmd(), a.runCmd(), a.daemonCmd(), a.logsCmd(), a.serviceCmd(), a.initCmd(), a.configCmd(), a.pruneCmd(), a.upgradeCmd(), a.contextCmd(),
 	)
 	return root
@@ -135,7 +135,7 @@ func (a *app) redact(s string) string {
 // GitHub App and the Telegram feed.
 func (a *app) env(ctx context.Context) (*pipeline.Env, error) {
 	if fi, err := os.Stat(a.home.Dir()); err != nil || !fi.IsDir() {
-		return nil, fmt.Errorf("no Gosha home at %s: create it with config.yaml, or pass --home", a.home.Dir())
+		return nil, fmt.Errorf("no Gosha home at %s: run `gosha setup`, or pass --home", a.home.Dir())
 	}
 	secrets, err := config.LoadSecrets(a.home, "", a.red)
 	if err != nil {

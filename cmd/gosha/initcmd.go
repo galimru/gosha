@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -15,6 +13,7 @@ import (
 
 	"github.com/galimru/gosha/internal/config"
 	"github.com/galimru/gosha/internal/notion"
+	"github.com/galimru/gosha/internal/prompt"
 )
 
 // starterConfig is what gosha init writes: the required fields, and every
@@ -83,9 +82,17 @@ func (a *app) initCmd() *cobra.Command {
 				return err
 			}
 
-			r, w := bufio.NewReader(cmd.InOrStdin()), cmd.ErrOrStderr()
+			defer prompt.ExitOnInterrupt(cmd.Context(), cmd.InOrStdin(), cmd.ErrOrStderr())()
+			p := prompt.New(cmd.InOrStdin(), cmd.ErrOrStderr())
+			ask := func(label, def string, check func(string) error) (string, error) {
+				s, err := p.Ask(label, def, check)
+				if errors.Is(err, prompt.ErrNoInput) {
+					return "", fmt.Errorf("init needs answers on stdin; write %s by hand to script it", config.ProjectFile)
+				}
+				return s, err
+			}
 			def := strings.Trim(nameChars.ReplaceAllString(strings.ToLower(filepath.Base(abs)), "-"), "-_")
-			name, err := ask(r, w, "Project name", def, func(s string) error {
+			name, err := ask("Project name", def, func(s string) error {
 				if !config.ValidName(s) {
 					return errors.New("must be lowercase letters, digits, '-' or '_'")
 				}
@@ -94,12 +101,12 @@ func (a *app) initCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			team, err := ask(r, w, "Linear team key (e.g. NXT)", "", nil)
+			team, err := ask("Linear team key (e.g. NXT)", "", nil)
 			if err != nil {
 				return err
 			}
 			team = strings.ToUpper(team)
-			notionPage, err := ask(r, w, "Notion root page (URL or id)", "", func(s string) error {
+			notionPage, err := ask("Notion root page (URL or id)", "", func(s string) error {
 				if _, err := notion.ParsePageID(s); err != nil {
 					return errors.New("must be a Notion page URL or id")
 				}
@@ -122,38 +129,6 @@ func (a *app) initCmd() *cobra.Command {
 			fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\ncommit it to the default branch, then run `gosha add <repo-url>` on the Gosha host\n", path)
 			return nil
 		},
-	}
-}
-
-// ask prompts on w until r gives an answer that check accepts. An empty
-// answer takes def, and is refused when def is empty. Running out of input
-// is an error, so init can't run unattended.
-func ask(r *bufio.Reader, w io.Writer, prompt, def string, check func(string) error) (string, error) {
-	if def != "" {
-		prompt += " [" + def + "]"
-	}
-	for {
-		fmt.Fprintf(w, "%s: ", prompt)
-		line, err := r.ReadString('\n')
-		if err != nil && line == "" {
-			fmt.Fprintln(w)
-			return "", fmt.Errorf("init needs answers on stdin; write %s by hand to script it", config.ProjectFile)
-		}
-		s := strings.TrimSpace(line)
-		if s == "" {
-			s = def
-		}
-		if s == "" {
-			fmt.Fprintln(w, "  required")
-			continue
-		}
-		if check != nil {
-			if err := check(s); err != nil {
-				fmt.Fprintf(w, "  %v\n", err)
-				continue
-			}
-		}
-		return s, nil
 	}
 }
 
