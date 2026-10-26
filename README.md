@@ -52,21 +52,27 @@ Later, `gosha upgrade` replaces the binary with the latest release and restarts 
 
 ## Setup
 
-**1. Gosha's identities.** Do this once per host. Everything goes in `~/.gosha`, with mode `700`.
+**1. The host.** Once, as the user Gosha will run as:
 
-- **GitHub App:** create one (Settings → Developer settings → GitHub Apps) with these repository permissions:
-  - Contents: read & write
-  - Pull requests: read & write
-  - Checks: read
-  - Actions: read
-  - Commit statuses: read
+```sh
+gosha setup                      # Claude, Linear, Notion, Telegram and the GitHub App
+gosha doctor                     # host and credentials
+sudo gosha service install       # systemd on Linux, launchd on macOS; runs as you, not root
+```
 
-  Don't grant the Workflows permission: without it, agents can't change your CI. Install the app on each project repo, and save its private key as `~/.gosha/github-app.pem` with mode `600`.
-- **Linear:** create an OAuth application (Settings → API) with *Client credentials* enabled.
-- **Notion:** create an internal integration with read content access, and share each project's root page with it.
-- **Telegram:** create a bot with @BotFather, add it as an admin of a private channel with "Post messages", and note the channel's chat id.
+`gosha setup` shows where to create each credential, checks each one before moving on, and writes `~/.gosha/config.yaml`, `secrets.env` and `github-app.pem`. It creates the GitHub App for you with only the permissions Gosha needs: Workflows is left out, so agents can't change your CI. It also finds the Telegram channel's id once you add the bot to the channel as an admin. Run it again any time to replace or re-check a value: Enter keeps what's set.
 
-**2. Global config** in `~/.gosha/config.yaml`:
+The service doesn't need a project to start: projects added later are picked up within a minute.
+
+<details>
+<summary>Setting up the host by hand</summary>
+
+- **GitHub App:** create one (Settings → Developer settings → GitHub Apps) with these repository permissions: Contents and Pull requests read & write; Checks, Actions and Commit statuses read. Don't grant Workflows. Save its private key as `~/.gosha/github-app.pem` with mode `600`.
+- **Linear:** an OAuth application (Settings → API) with *Client credentials* enabled.
+- **Notion:** an internal integration with read content access.
+- **Telegram:** a bot from @BotFather, made an admin of a private channel with "Post messages".
+
+Then `~/.gosha/config.yaml` (all options in [DESIGN §5.1](docs/DESIGN.md#51-global-goshaconfigyaml)):
 
 ```yaml
 github_app:
@@ -75,9 +81,7 @@ telegram:
   chat_id: -1001234567890
 ```
 
-All the options are in [DESIGN §5.1](docs/DESIGN.md#51-global-goshaconfigyaml): `concurrency`, `agent.sandbox`, `digest_at`, `heartbeat_url` and `retention`.
-
-**3. Secrets.** Run `gosha secrets edit` and fill in `~/.gosha/secrets.env`:
+And `gosha secrets edit` for `~/.gosha/secrets.env`:
 
 ```sh
 CLAUDE_CODE_OAUTH_TOKEN=…   # from `claude setup-token`
@@ -87,7 +91,9 @@ NOTION_TOKEN=…
 TELEGRAM_BOT_TOKEN=…
 ```
 
-**4. A project.** In a checkout of its repo:
+</details>
+
+**2. A project.** Install the GitHub App on the project's repo, and share its root Notion page with the integration. Then, in a checkout of the repo:
 
 ```sh
 gosha init   # asks for the Linear team and Notion page, writes .gosha/config.yaml
@@ -98,15 +104,10 @@ The config's options are in [DESIGN §5.2](docs/DESIGN.md#52-per-project-repogos
 
 ```sh
 gosha add https://github.com/you/your-repo
-gosha doctor                     # host, credentials, and each project's Linear team and Notion access
-gosha run <project> --dry-run    # what Gosha would pick up, without changing anything
+gosha doctor <project>           # the project's config, Linear team and Notion access
 ```
 
-**5. The service:**
-
-```sh
-sudo gosha service install       # systemd on Linux, launchd on macOS; runs as you, not root
-```
+A running service starts on the project's Ready tickets within a minute. To see what it would pick up first, run `gosha run <project> --dry-run` before installing the service, or before moving tickets to Ready.
 
 ## Usage
 
@@ -117,6 +118,7 @@ Day to day, you only use Linear: move tickets to **Ready** and read the result o
 | `gosha status` | Projects (active or paused, and why), runs in flight, a usage-limit pause |
 | `gosha logs [-f] [--project <name>]` | The log, as text |
 | `gosha doctor [project]` | Check the host, credentials and projects |
+| `gosha setup` | Replace or re-check the host's credentials |
 | `gosha config show <project>` | A project's effective config, defaults included |
 | `gosha context show <project>` | The Notion page tree agents start from |
 | `gosha service status\|start\|stop\|restart` | Control the service |

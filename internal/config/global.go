@@ -105,7 +105,7 @@ func ParseGlobal(h Home, file string, data []byte) (*Global, error) {
 	key := h.Path(g.GitHubApp.PrivateKeyFile)
 	f, err := os.Open(key)
 	if err != nil {
-		return nil, fe("github_app.private_key_file", err.Error())
+		return nil, &FieldError{File: file, Field: "github_app.private_key_file", Err: err}
 	}
 	defer f.Close()
 	if err := CheckPrivate(f); err != nil {

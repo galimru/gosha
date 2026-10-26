@@ -3,6 +3,7 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -59,6 +60,11 @@ type AppInfo struct {
 	ID   int64
 	Slug string
 	Name string
+	// Permissions are the App's repository permissions, e.g.
+	// "contents": "write".
+	Permissions map[string]string
+	// SettingsURL is the App's settings page on github.com.
+	SettingsURL string
 }
 
 // BotLogin is the account PRs and commits show up as, e.g. "gosha[bot]".
@@ -70,7 +76,23 @@ func (a *App) Info(ctx context.Context) (*AppInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("github app: %w", err)
 	}
-	return &AppInfo{ID: app.GetID(), Slug: app.GetSlug(), Name: app.GetName()}, nil
+	info := &AppInfo{ID: app.GetID(), Slug: app.GetSlug(), Name: app.GetName(), Permissions: map[string]string{},
+		SettingsURL: "https://github.com/settings/apps/" + app.GetSlug()}
+	if o := app.GetOwner(); o.GetType() == "Organization" {
+		info.SettingsURL = "https://github.com/organizations/" + o.GetLogin() + "/settings/apps/" + app.GetSlug()
+	}
+	// The permissions struct has a field per permission; its JSON form is
+	// the plain name → level map.
+	if app.Permissions != nil {
+		data, err := json.Marshal(app.Permissions)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(data, &info.Permissions); err != nil {
+			return nil, err
+		}
+	}
+	return info, nil
 }
 
 // Installation finds the App's installation on a repo.
