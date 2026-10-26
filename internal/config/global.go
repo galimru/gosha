@@ -1,3 +1,5 @@
+// Package config loads and validates the global and per-project config, resolves
+// the gosha home directory, and reads secrets with redaction.
 package config
 
 import (

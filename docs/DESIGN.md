@@ -1,6 +1,6 @@
 # Gosha — Design
 
-> Describes Gosha's current behaviour. How it was built, milestone by milestone: [ROADMAP.md](ROADMAP.md). Assumptions checked against real services before building: [SPIKES.md](SPIKES.md). Past decisions and what they replaced: §13.
+> Describes Gosha's current behaviour, and is edited in place whenever behaviour changes: the PR that changes behaviour updates this file too. It covers what the code can't say on its own (the human workflow, contracts with Linear, GitHub and Notion, guarantees and why); how something is implemented is left to the code. History is in git. How it was built, milestone by milestone: [ROADMAP.md](ROADMAP.md). Assumptions checked against real services before building: [SPIKES.md](SPIKES.md). Decisions in force and why: §13.
 
 ## 1. Overview
 
@@ -119,24 +119,9 @@ Why one daemon rather than one per project: Claude subscription limits and the h
 - **One process per project:** a supervisor holds `projects/<name>/run.lock` while it runs. `gosha run` takes the same lock, so it refuses a project the daemon is running, and the daemon skips (and retries every minute) a project `gosha run` holds.
 - **Panics** are recovered per supervisor: the panic and its stack go to the log, a 💥 alert goes to Telegram, and the supervisor waits 5 minutes and polls again. The open run resumes, because every step is idempotent (§8). Only the first crash in a row alerts; after a pass that succeeds, the next crash alerts again. A ticket that panics every time holds its project until a human moves it out of Ready (e.g. to Backlog); other projects aren't affected.
 
-### Packages
+### Code layout
 
-```
-cmd/gosha/            CLI entrypoint (all commands in §11.6)
-internal/config/      global + project config loading and validation
-internal/linear/      GraphQL client + app OAuth: poll, transition, comment, attachment, relations
-internal/notion/      API client, block → markdown, incremental page-tree mirror (§6)
-internal/github/      GitHub REST API via go-github + ghinstallation: App auth, PRs, reviews, comments, check runs, workflow runs, merge
-internal/notify/      Telegram sender, rate limiting, retries; heartbeat ping
-internal/gitx/        bare clone, fetch, ticket checkouts, merge, push (shells out to the git CLI; token injected per command, hooks off)
-internal/agent/       claude CLI runner, prompt rendering, result parsing
-internal/tmpl/        prompt data model + functions (§5.3)
-internal/pipeline/    per-ticket state machine, limits, recovery
-internal/store/       SQLite persistence
-internal/service/     systemd and launchd units, service user, login-shell PATH
-internal/daemon/      supervisors, project scan, panic isolation, heartbeat, graceful shutdown
-internal/flock/       advisory file locks shared by every gosha process (run.lock, cleanup.lock, context.lock)
-```
+`cmd/gosha/` is the CLI (§11.6). Under `internal/`, each external system has its own package (`linear`, `notion`, `github`, `gitx`, `notify`), and `pipeline` holds the per-ticket state machine on top of them. Each package's doc comment says what it owns.
 
 **Tooling choices:**
 - **No `gh` CLI.** GitHub is accessed through its API from Go (`google/go-github`, with `bradleyfalzon/ghinstallation` for GitHub App tokens). That gives typed responses, automatic token refresh, conditional requests to save rate limit, and no command output to parse.
@@ -631,14 +616,7 @@ The project's config is **not** in this tree; it's read from the repo (§5.2). `
 - `gosha daemon` runs in the foreground and logs to a file and stderr. Any service manager can run it.
 - `sudo gosha service install` / `sudo gosha service uninstall` register Gosha with the host's service manager. Both need root.
 
-| | Linux (systemd) | macOS (launchd) |
-|---|---|---|
-| Unit | `/etc/systemd/system/gosha.service` | `/Library/LaunchDaemons/dev.gosha.daemon.plist` |
-| Runs as | `User=<service user>` | `UserName=<service user>` |
-| Start at boot / restart on failure | `WantedBy=multi-user.target`, `Restart=on-failure` | `RunAtLoad`, `KeepAlive` |
-| Install does | write unit → `daemon-reload` → `enable` → `restart` | `launchctl bootout` (if loaded) → write plist → `launchctl bootstrap system` |
-| Uninstall does | `disable --now` → remove unit → `daemon-reload` | `launchctl bootout` → remove plist |
-
+- **What it installs:** a system-level unit (systemd on Linux, a launchd daemon on macOS) that runs as the service user, starts at boot and restarts on failure.
 - **`install` flags:**
   - `--user <name>` (default: the invoking user, i.e. `$SUDO_USER` under sudo, otherwise the current user; must exist and must not be root)
   - `--binary` (default: the resolved path of the running `gosha`)
@@ -650,15 +628,7 @@ The project's config is **not** in this tree; it's read from the repo (§5.2). `
 - **Re-running `install`** is safe: it replaces the unit and restarts the service. Upgrades go through `gosha upgrade` (§11.4).
 - **The unit runs the binary by the absolute path it had at install time.** Moving the binary means running `install` again.
 - **`uninstall`** stops and removes only the service. Config, secrets and state (§11.3) are left untouched.
-- **Day-to-day control:** thin wrappers, so the same commands work on both OSes:
-
-| Command | Linux (systemd) | macOS (launchd) |
-|---|---|---|
-| `gosha service start` | `systemctl start gosha` | `launchctl bootstrap system <plist>` (if not loaded) + `kickstart` |
-| `gosha service stop` | `systemctl stop gosha` | `launchctl bootout system/dev.gosha.daemon` |
-| `gosha service restart` | `systemctl restart gosha` | `launchctl kickstart -k system/dev.gosha.daemon` |
-| `gosha service status` | `systemctl show` (state, PID, uptime) | `launchctl print` (state, PID) |
-
+- **Day-to-day control:** `gosha service start|stop|restart|status` wrap the service manager, so the same commands work on both OSes.
   - `start`, `stop` and `restart` need root.
   - `status` doesn't need root. It shows the service manager's view (state, PID, uptime). For what Gosha is doing, use `gosha status`.
   - `stop` sends SIGTERM, so in-flight runs stay resumable.
@@ -753,13 +723,13 @@ next: gosha doctor, then sudo gosha service install
 
 ## 13. Decisions log
 
-Each entry is a decision in force, with why where it isn't obvious. Where it replaced an earlier one, that's noted in brackets.
+Each entry is a decision in force, with why where it isn't obvious. What it replaced is in git; an alternative is named only where it would otherwise look like the better choice.
 
 **Identity and instructions**
 - One GitHub identity: the Gosha GitHub App, never a person. Reviews are `COMMENT` reviews with a verdict, since an app can't approve its own PR.
-- Linear identity: an OAuth app with the `client_credentials` grant; no personal key, no browser flow. [Replaced a paste-back OAuth flow after the spikes.]
+- Linear identity: an OAuth app with the `client_credentials` grant; no personal key, no browser flow.
 - Linear is the only channel for instructions: ticket states and ticket comments. PR comments are for people and aren't read, and there's no `/restart` command: closing the PR and moving the ticket to Ready starts over.
-- Telegram is for alerts only (paused, Blocked, delivered, usage limit, crash, daily digest), posted to a private channel. Linear only gets the PR attachment plus the Blocked and Delivered comments. [Telegram was a detailed activity feed until M7.] Liveness is an optional heartbeat URL, not the digest.
+- Telegram is for alerts only (paused, Blocked, delivered, usage limit, crash, daily digest), posted to a private channel. Linear only gets the PR attachment plus the Blocked and Delivered comments. Progress is on the PR, so a phone channel only buzzes when a human may need to act. Liveness is an optional heartbeat URL, not the digest.
 
 **Tickets and states**
 - States: Ready / In Progress / In Review / Blocked, with default names that can be overridden. Done and Canceled are recognised by state type. Only humans move tickets to Done. Backlog/Todo pause, Canceled abandons; a move is noticed within 30s, even while waiting for CI.
@@ -773,7 +743,7 @@ Each entry is a decision in force, with why where it isn't obvious. Where it rep
 - Checks are waited for in-line; the ticket stays the project's active ticket meanwhile. A run is parked only while Blocked.
 - Without `checks.required`, whatever checks appear within `start_grace` must pass, and none appearing is a pass; Gosha doesn't parse workflow triggers.
 - A fix for failed checks or conflicts goes back through review (a re-review that only takes a review round if it requests changes), then checks.
-- The base is merged into the branch by GitHub's update-branch API, so Gosha needs no particular git version. Conflicts are resolved by the implementer in a fresh checkout and count as a check round. [M4 merged locally with `git merge-tree`, which needs git ≥ 2.38.]
+- The base is merged into the branch by GitHub's update-branch API, so Gosha needs no particular git version. Conflicts are resolved by the implementer in a fresh checkout and count as a check round.
 - Merges are pinned to the checked head; a push by anyone else after the checks blocks the ticket instead of being merged.
 - The reviewer runs in a fresh, read-only clone of the pushed head each round, so nothing it does reaches the implementer's checkout or the branch; CI runs the tests. Each round is a new session, shown the last round's findings and the implementer's reply. Address passes reply on the PR with the implementer's summary.
 - Branches are always `gosha/<ID>-<slug>`, with no pattern to configure; they're tracked through `gosha.db`.
@@ -781,7 +751,7 @@ Each entry is a decision in force, with why where it isn't obvious. Where it rep
 - The Delivered comment holds only the summary, PR link, assumptions, left out and deploy line; the rest is on the PR. Its contents are recorded on the run as they're gathered.
 
 **Agents and sandbox**
-- Agents run unattended in `dontask` mode: an allowlist confines file tools to the checkout and temp directory, and Claude Code's OS-level sandbox confines Bash and blocks `~/.gosha`. The global `agent.sandbox` switch picks both: off means `auto` mode, with no sandbox. There's no per-project mode and no bypass. [Bypass mode was the plan until the spikes showed it let file tools write outside the sandbox.]
+- Agents run unattended in `dontask` mode: an allowlist confines file tools to the checkout and temp directory, and Claude Code's OS-level sandbox confines Bash and blocks `~/.gosha`. The global `agent.sandbox` switch picks both: off means `auto` mode, with no sandbox. There's no per-project mode and no bypass: bypass mode lets file tools write outside the sandbox (SPIKES.md §1c).
 - Agents only work in `~/.gosha/workspaces/`. The OS sandbox denies `~/.gosha` and re-allows the ticket's workspace; permission rules deny every other top-level entry, because a permission deny beats any allow.
 - Ticket checkouts are self-contained local clones, never linked worktrees, and Gosha never runs git inside one after an agent has used it: the work is collected by fetching from the bare clone.
 - Gosha runs no repo-defined commands outside the sandbox: there's no `agent.setup`, and agents install dependencies themselves.
@@ -798,7 +768,7 @@ Each entry is a decision in force, with why where it isn't obvious. Where it rep
 
 **Context**
 - Notion mirror: page tree → file tree (`README.md` for pages with children, `INDEX.md` map). Databases and pages linked from tickets but outside the tree aren't mirrored.
-- The mirror is refreshed only right before a pickup. Search detects changes; the tree comes from each page's child page blocks; only changed pages are fetched, unless the tree changed, in which case every page is. Each pickup gets its own frozen copy in the ticket's workspace. [An idle refresh every 15 minutes was dropped in M7.]
+- The mirror is refreshed only right before a pickup. Search detects changes; the tree comes from each page's child page blocks; only changed pages are fetched, unless the tree changed, in which case every page is. Each pickup gets its own frozen copy in the ticket's workspace. There's no idle refresh: nothing reads the mirror between pickups.
 - Notion without access to the root page pauses the project; any other Notion failure uses the last mirror.
 
 **Daemon and operations**
@@ -810,8 +780,8 @@ Each entry is a decision in force, with why where it isn't obvious. Where it rep
 - Host-agnostic: macOS and Linux. Gosha runs as an existing regular user (the installing user by default) and refuses root; it never creates OS accounts. `gosha service` manages a systemd or launchd unit, and anything else runs `gosha daemon` itself.
 - A single home directory `~/.gosha`, with a `projects/<name>/` folder per project and `workspaces/` for everything agents touch.
 - Workspaces are removed when a run ends; Blocked workspaces and finished runs' files after `retention`. Run records are never deleted.
-- Releases are cut automatically from Conventional Commits on `main`, staying `0.x`. `install.sh` and `gosha upgrade` verify every download against the release's checksums.
-- Schema migrations are append-only from one baseline, with a backup before each upgrade and a refusal to run against a newer database. [Migrations were edited in place until the first release.]
+- Releases are cut by hand from `main`, so one release can batch several merges; the version comes from the Conventional Commits since the last tag, staying `0.x`. `install.sh` and `gosha upgrade` verify every download against the release's checksums.
+- Schema migrations are append-only from one baseline, with a backup before each upgrade and a refusal to run against a newer database.
 
 **Tooling**
 - GitHub through its API from Go (go-github); git through the `git` CLI; no `gh` dependency.
